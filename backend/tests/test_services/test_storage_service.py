@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 from unittest.mock import MagicMock, patch
 
-import pytest
 from google.cloud.exceptions import NotFound
 
 
