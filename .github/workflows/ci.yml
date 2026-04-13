@@ -100,8 +100,8 @@ jobs:
       REFRESH_TOKEN_EXPIRE_DAYS: "7"
       OPENAI_API_KEY: sk-test-placeholder
       PINECONE_API_KEY: test-placeholder
-      AWS_REGION: us-east-1
-      S3_BUCKET_NAME: vidshield-test
+      GCP_PROJECT_ID: vidshield-test
+      GCS_BUCKET_NAME: vidshield-test
 
     steps:
       - uses: actions/checkout@v4
@@ -204,9 +204,9 @@ jobs:
           cache-to: type=gha,mode=max
           tags: vidshield-frontend:ci
 
-  # ── Terraform validate ────────────────────────────────────────────────────────
+  # ── Terraform validate (GCP) ──────────────────────────────────────────────────
   terraform-validate:
-    name: Validate — Terraform
+    name: Validate — Terraform (GCP)
     runs-on: ubuntu-latest
 
     steps:
@@ -215,7 +215,7 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.7.x"
+          terraform_version: "1.9.x"
 
       - name: terraform fmt check
         working-directory: terraform

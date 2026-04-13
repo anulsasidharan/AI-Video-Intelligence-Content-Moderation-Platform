@@ -29,8 +29,8 @@ Project root
 ├── docker-compose.yml
 ├── docker-compose.prod.yml
 ├── Makefile
-├── terraform/               # AWS modules (VPC, RDS, ECS, ElastiCache, S3, CF, …)
-├── k8s/                     # Kubernetes manifests + migrate job
+├── terraform/               # IaC (legacy AWS modules may remain until GCP migration — see task.md)
+├── k8s/                     # GKE manifests + migrate job (when committed; see DEPLOYMENT.md)
 └── .github/workflows/       # ci.yml, cd-prod.yml, …
 ```
 
@@ -92,7 +92,7 @@ flowchart TB
   QN --> W
   QS --> W
   W --> DB[(PostgreSQL sync session)]
-  W --> S3[(S3)]
+  W --> GCS[(GCS)]
   W --> OAI[(OpenAI API)]
 ```
 
@@ -138,7 +138,7 @@ Frontend uses `socket.io-client` and `WS_URL` / same-origin resolution from `fro
 
 | Integration | Config | Usage |
 |-------------|--------|--------|
-| AWS S3 | `AWS_*`, `S3_BUCKET_NAME` | Video + artifact storage, presigned URLs |
+| Google Cloud Storage | `GCP_PROJECT_ID`, `GCS_BUCKET_NAME`, `GCS_PRESIGNED_URL_EXPIRE`, optional `GCS_SERVICE_ACCOUNT_KEY_PATH` | Video + artifact storage, V4 signed URLs; `gs://` in tools |
 | OpenAI | `OPENAI_API_KEY`, models | Vision/text/Whisper paths |
 | Pinecone | `PINECONE_API_KEY`, `PINECONE_INDEX` | `similarity_search` tool |
 | SendGrid | `SENDGRID_API_KEY`, from fields | `email_service` |
@@ -150,9 +150,9 @@ Frontend uses `socket.io-client` and `WS_URL` / same-origin resolution from `fro
 
 ## 8. Infrastructure (as code)
 
-- **Terraform:** modular AWS stack (`terraform/modules/*`) orchestrated in `terraform/main.tf`.
-- **GitHub Actions CD:** ECR image build + ECS service deploy (`cd-prod.yml`).
-- **Kubernetes:** `k8s/*.yaml` for alternative deployment; Makefile targets for apply/migrate/logs.
+- **Terraform:** target GCP modules per `task.md`; repo may still ship legacy AWS modules under `terraform/modules/*` until replaced.
+- **GitHub Actions CD:** Artifact Registry image build + GKE rollout (`cd-prod.yml`, `cd-staging.yml`) with Workload Identity Federation.
+- **Kubernetes (GKE):** expected Deployments `vidshield-backend`, `vidshield-worker`, `vidshield-frontend` in namespace `vidshield`; committed `k8s/*.yaml` when present — Makefile targets for apply/migrate/logs.
 
 ---
 
@@ -177,3 +177,11 @@ Frontend uses `socket.io-client` and `WS_URL` / same-origin resolution from `fro
 
 - Structured logging via `structlog` with Celery task signals in `celery_app.py`.
 - Request context middleware binds user metadata when authenticated.
+
+---
+
+## 12. Related documents
+
+- **[GCP-ARCHITECTURE-DESIGN.md](GCP-ARCHITECTURE-DESIGN.md)** — GCP diagrams and service inventory  
+- **[GCP_DEPLOYMENT_RUNBOOK.md](GCP_DEPLOYMENT_RUNBOOK.md)** — manual GCP deployment procedures  
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** — compose, CI/CD, configuration checklist

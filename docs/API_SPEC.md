@@ -114,6 +114,8 @@ Redis-backed per-IP tiers (`app/core/rate_limit.py`). Auth and sensitive routes 
 
 **Notes:** Several mutations require `OperatorUser` or ownership checks inside handler — see `videos.py` for exact rules.
 
+**Storage:** Presigned upload and playback URLs are backed by **Google Cloud Storage (GCS)** (`GCS_BUCKET_NAME`, signed URL settings in `config.py`).
+
 ---
 
 ## 6. Moderation (`/api/v1/moderation`)
@@ -329,3 +331,11 @@ Query params include pagination (`skip`, `limit`) and filters as defined in `aud
 2. Send **`Content-Type: application/json`** on JSON bodies.
 3. **Stripe webhook** must receive the **raw body** for signature verification — configure Stripe to call `/api/v1/billing/webhook`.
 4. OpenAPI JSON: `/openapi.json` (when docs enabled) for exhaustive schema names.
+
+---
+
+## 24. Related documents
+
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** — runtime topology, CI/CD, environment variables  
+- **[GCP_DEPLOYMENT_RUNBOOK.md](GCP_DEPLOYMENT_RUNBOOK.md)** — manual GCP setup  
+- **[GCP-ARCHITECTURE-DESIGN.md](GCP-ARCHITECTURE-DESIGN.md)** — platform diagrams

@@ -103,7 +103,7 @@ async def transcribe_audio(
     wider AI pipeline can continue with degraded input.
 
     Args:
-        video_path: Local file path to the video (s3:// URLs must be
+        video_path: Local file path to the video (gs:// URLs must be
                     downloaded first via FrameExtractor or StorageService).
         language:   ISO 639-1 language hint passed to Whisper (optional).
         _client:    AsyncOpenAI client override — use in tests to avoid live calls.

@@ -12,11 +12,11 @@ VidShield AI is an enterprise-grade AI Video Intelligence & Content Moderation P
 | Backend | Python 3.12, FastAPI, Uvicorn, Celery, Redis, SQLAlchemy 2.0, Alembic |
 | AI/ML | OpenAI GPT-4o / GPT-4o-mini (vision + text), OpenAI Whisper, LangChain 0.2+, LangGraph |
 | Video Processing | FFmpeg, OpenCV, PyAV |
-| Database | PostgreSQL 16, Redis 7 (cache + broker), Pinecone (vector store) |
-| Storage | AWS S3 (video + thumbnails + artifacts) |
-| Infrastructure | AWS ECS Fargate, ALB, CloudFront, RDS, ElastiCache, SQS, Lambda, ECR |
-| CI/CD | GitHub Actions, Docker, Terraform, AWS CDK |
-| Monitoring | CloudWatch, Prometheus, Grafana, Sentry |
+| Database | PostgreSQL 16 (Cloud SQL), Redis 7 (Cloud Memorystore — cache + broker), Pinecone (vector store) |
+| Storage | Google Cloud Storage — GCS (video + thumbnails + artifacts) |
+| Infrastructure | GKE (backend + worker), Cloud Run, Cloud Load Balancer, Cloud CDN, Cloud SQL, Cloud Memorystore, Pub/Sub, Artifact Registry |
+| CI/CD | GitHub Actions, Docker, Terraform (GCP provider), Workload Identity Federation |
+| Monitoring | Cloud Monitoring, Prometheus, Grafana, Sentry |
 
 ## Project Structure
 
@@ -33,12 +33,12 @@ vidshield-ai/
 │   ├── outputs.tf
 │   ├── modules/
 │   │   ├── vpc/
-│   │   ├── ecs/
-│   │   ├── rds/
-│   │   ├── elasticache/
-│   │   ├── s3/
-│   │   ├── cloudfront/
-│   │   ├── sqs/
+│   │   ├── gke/
+│   │   ├── cloud-sql/
+│   │   ├── memorystore/
+│   │   ├── gcs/
+│   │   ├── cloud-cdn/
+│   │   ├── pubsub/
 │   │   └── monitoring/
 │   └── environments/
 │       ├── dev.tfvars
@@ -253,14 +253,22 @@ make lint                   # ruff + eslint
 make db-migrate             # alembic upgrade head
 make db-revision MSG="..."  # alembic revision --autogenerate
 
-# Infrastructure
-make tf-plan ENV=dev        # terraform plan
-make tf-apply ENV=dev       # terraform apply
+# Infrastructure (GCP Terraform)
+make tf-plan ENV=dev        # terraform plan (GCP provider)
+make tf-apply ENV=dev       # terraform apply (GCP provider)
 make deploy ENV=staging     # full deploy pipeline
 
-# Docker
+# Docker / Artifact Registry
 make build                  # build all images
-make push                   # push to ECR
+make push                   # push to Artifact Registry (GAR)
+
+# Kubernetes (GKE)
+make k8s-apply TAG=v1.2.3 REGISTRY=REGION-docker.pkg.dev/PROJECT/REPO
+make k8s-status             # pods, services, HPAs, PVCs
+make k8s-migrate            # run Alembic migration job in GKE
+make k8s-rollout-backend TAG=v1.2.3 REGISTRY=...
+make k8s-rollout-worker  TAG=v1.2.3 REGISTRY=...
+make k8s-rollout-frontend TAG=v1.2.3 REGISTRY=...
 ```
 
 ## Coding Conventions
@@ -270,7 +278,7 @@ make push                   # push to ECR
 - **API**: REST with `/api/v1/` prefix, consistent error envelope `{ error: { code, message, details } }`
 - **Commits**: conventional commits (`feat:`, `fix:`, `chore:`, etc.)
 - **Branches**: `feat/*`, `fix/*`, `chore/*` off `main`
-- **env vars**: never committed, all secrets via AWS Secrets Manager, local via `.env` files (gitignored)
+- **env vars**: never committed, all secrets via GCP Secret Manager, local via `.env` files (gitignored)
 
 ## AI Agent Architecture
 
@@ -284,3 +292,48 @@ The system uses **LangGraph** to orchestrate a multi-agent pipeline:
 6. **Report Generator** — synthesizes all agent outputs into structured moderation report
 
 All agents are autonomous — no human-in-the-loop required for standard moderation decisions. Escalation to human review is optional and configurable per policy.
+
+## GCP Configuration
+
+### Environment Variables (GCP-specific)
+
+| Variable | Purpose | Required |
+|----------|---------|----------|
+| `GCP_PROJECT_ID` | GCP project ID | Yes |
+| `GCS_BUCKET_NAME` | GCS bucket for videos, thumbnails, artifacts | Yes |
+| `GCS_PRESIGNED_URL_EXPIRE` | Signed URL TTL in seconds (default 3600) | No |
+| `GCS_SERVICE_ACCOUNT_KEY_PATH` | Path to service-account JSON key for signed URL generation. Leave blank on GKE (Workload Identity handles this via ADC). | No |
+| `RTMP_INGEST_HOST` | RTMP ingest hostname for live streams (default `ingest.vidshield.ai`) | No |
+
+### Authentication Strategy
+
+| Environment | Auth method |
+|-------------|------------|
+| Local dev | `GOOGLE_APPLICATION_CREDENTIALS` or `GCS_SERVICE_ACCOUNT_KEY_PATH` pointing to a service-account JSON key |
+| GKE (prod/staging) | Workload Identity Federation — no key file needed; ADC resolves automatically |
+| GitHub Actions | Workload Identity Federation via `google-github-actions/auth@v2` |
+
+### GitHub Actions Secrets Required
+
+| Secret | Description |
+|--------|-------------|
+| `GCP_PROJECT_ID` | GCP project ID |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Workload Identity pool provider resource name |
+| `GCP_SERVICE_ACCOUNT` | Service account email used by GitHub Actions |
+| `GAR_LOCATION` | Artifact Registry region (e.g. `us-central1`) |
+| `GAR_REPOSITORY` | Artifact Registry repository name (e.g. `vidshield`) |
+| `GKE_CLUSTER_PROD` | GKE cluster name for production |
+| `GKE_CLUSTER_STAGING` | GKE cluster name for staging |
+| `GKE_CLUSTER_LOCATION` | GKE cluster region or zone |
+| `NEXT_PUBLIC_API_URL` | Public API URL injected at frontend build time |
+| `API_UPSTREAM_URL` | Internal API upstream URL for SSR proxy |
+
+### GitHub Actions Variables (non-secret)
+
+| Variable | Description |
+|----------|-------------|
+| `CLOUD_CDN_URL_MAP` | Cloud CDN URL map name — triggers cache invalidation on frontend deploy |
+
+### GCS Storage URL Scheme
+
+All internal video references use `gs://` URLs (e.g. `gs://vidshield-videos/videos/abc.mp4`). The `s3_key` field name is retained in database columns and Celery task signatures for backwards compatibility — it stores GCS object keys, not S3 keys.

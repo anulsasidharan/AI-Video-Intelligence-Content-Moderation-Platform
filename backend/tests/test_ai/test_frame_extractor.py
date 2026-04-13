@@ -1,4 +1,4 @@
-"""Tests for T-01 FrameExtractor — OpenCV and boto3 mocked."""
+"""Tests for T-01 FrameExtractor — OpenCV and google-cloud-storage mocked."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 from app.ai.tools.frame_extractor import (
     FrameExtractionError,
     FrameExtractionResult,
-    _download_from_s3,
+    _download_from_gcs,
     _extract_local,
     extract_frames,
 )
@@ -47,7 +47,6 @@ def _make_mock_cap(
 
 def _b64_jpeg() -> str:
     """Return a minimal valid base64 JPEG string for assertions."""
-    # Any non-empty b64 string — actual JPEG encoding comes from cv2 in real code
     return base64.b64encode(b"\xff\xd8\xff").decode()
 
 
@@ -100,15 +99,11 @@ def test_extract_local_read_returns_false_stops_early(mock_imencode, mock_cap_cl
 @patch("app.ai.tools.frame_extractor.cv2.VideoCapture")
 @patch("app.ai.tools.frame_extractor.cv2.imencode")
 def test_extract_local_encode_failure_skips_frame(mock_imencode, mock_cap_cls):
-    """Frames that fail JPEG encoding are skipped, not raised.
-    total_frames=3 ensures the while condition (frame_idx < total_frames) terminates.
-    """
-    mock_imencode.return_value = (False, None)  # encoding always fails
-    # Use total_frames=3 so the loop exits after exhausting all frame positions
+    """Frames that fail JPEG encoding are skipped, not raised."""
+    mock_imencode.return_value = (False, None)
     mock_cap_cls.return_value = _make_mock_cap(fps=1.0, total_frames=3)
 
     result = _extract_local("fake.mp4", interval_seconds=1.0, max_frames=10)
-    # All frames skipped — should return empty but not raise
     assert result.frames == []
 
 
@@ -127,12 +122,12 @@ def test_extract_local_zero_fps_fallback(mock_imencode, mock_cap_cls):
     assert result.fps == 25.0
 
 
-# ── extract_frames (S3 path) ──────────────────────────────────────────────────
+# ── extract_frames (GCS path) ─────────────────────────────────────────────────
 
 
-@patch("app.ai.tools.frame_extractor._download_from_s3")
+@patch("app.ai.tools.frame_extractor._download_from_gcs")
 @patch("app.ai.tools.frame_extractor._extract_local")
-def test_extract_frames_s3_url_downloads_then_extracts(mock_extract, mock_download):
+def test_extract_frames_gcs_url_downloads_then_extracts(mock_extract, mock_download):
     mock_download.return_value = "/tmp/downloaded.mp4"
     mock_extract.return_value = FrameExtractionResult(
         frames=["abc"],
@@ -142,16 +137,16 @@ def test_extract_frames_s3_url_downloads_then_extracts(mock_extract, mock_downlo
         frame_count_extracted=1,
     )
 
-    result = extract_frames("s3://my-bucket/video.mp4", interval_seconds=2.0, max_frames=5)
+    result = extract_frames("gs://my-bucket/video.mp4", interval_seconds=2.0, max_frames=5)
 
-    mock_download.assert_called_once_with("s3://my-bucket/video.mp4")
+    mock_download.assert_called_once_with("gs://my-bucket/video.mp4")
     mock_extract.assert_called_once()
     assert len(result.frames) == 1
 
 
 @patch("app.ai.tools.frame_extractor.cv2.VideoCapture")
 @patch("app.ai.tools.frame_extractor.cv2.imencode")
-def test_extract_frames_local_path_no_s3(mock_imencode, mock_cap_cls):
+def test_extract_frames_local_path_no_gcs(mock_imencode, mock_cap_cls):
     fake_buf = MagicMock()
     fake_buf.tobytes.return_value = b"\xff\xd8\xff"
     mock_imencode.return_value = (True, fake_buf)
@@ -161,14 +156,14 @@ def test_extract_frames_local_path_no_s3(mock_imencode, mock_cap_cls):
     assert result.frame_count_extracted == 2
 
 
-# ── _download_from_s3 ─────────────────────────────────────────────────────────
+# ── _download_from_gcs ────────────────────────────────────────────────────────
 
 
-def test_download_from_s3_invalid_scheme_raises():
+def test_download_from_gcs_invalid_scheme_raises():
     with pytest.raises(FrameExtractionError, match="Unsupported URL scheme"):
-        _download_from_s3("https://example.com/video.mp4")
+        _download_from_gcs("https://example.com/video.mp4")
 
 
-def test_download_from_s3_missing_key_raises():
-    with pytest.raises(FrameExtractionError, match="Invalid S3 URL"):
-        _download_from_s3("s3://bucket-only")
+def test_download_from_gcs_missing_object_name_raises():
+    with pytest.raises(FrameExtractionError, match="Invalid GCS URL"):
+        _download_from_gcs("gs://bucket-only")
