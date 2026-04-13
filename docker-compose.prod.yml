@@ -1,0 +1,71 @@
+version: '3.9'
+
+# Production overrides — use with:
+#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports: []  # not exposed externally in prod
+
+  redis:
+    restart: always
+    ports: []  # not exposed externally in prod
+
+  backend:
+    restart: always
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      REDIS_URL: ${REDIS_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      SECRET_KEY: ${SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      PINECONE_API_KEY: ${PINECONE_API_KEY}
+      SENTRY_DSN: ${SENTRY_DSN}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      # Required behind ALB/CloudFront so Starlette/FastAPI redirects use https://
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"
+
+  worker:
+    restart: always
+    environment:
+      APP_ENV: production
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      REDIS_URL: ${REDIS_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      SECRET_KEY: ${SECRET_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    # Must match task_routes in celery_app.py (default queue "celery" alone will not
+    # drain video|moderation|notifications|… queues).
+    command: >
+      celery -A app.workers.celery_app worker --loglevel=warning --concurrency=4
+      --queues video,moderation,analytics,cleanup,reports,notifications,streams
+
+  frontend:
+    restart: always
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL}
+        API_UPSTREAM_URL: ${API_UPSTREAM_URL:-}
+        NEXT_PUBLIC_APP_ENV: production
+        NEXT_PUBLIC_MOCK_API: "false"
+
+volumes:
+  postgres_data:

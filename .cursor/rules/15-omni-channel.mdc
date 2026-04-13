@@ -1,0 +1,24 @@
+---
+description: Video ingestion and input channels (upload, live stream, API, webhooks)
+globs: backend/services/**/storage*, backend/api/**/videos*, backend/api/**/live*, backend/api/**/webhooks*
+---
+
+Ingestion stack (VidShield AI):
+- **Video upload:** S3 presigned URLs or direct upload; backend processes after upload completion.
+- **Live stream ingestion:** Ingest live streams for real-time or near-real-time moderation; WebSocket or callback for status.
+- **API submission:** REST API for platforms to submit video URLs or references; async processing via Celery.
+- **Webhooks:** Inbound webhooks for third-party ingestion or callback endpoints for moderation results (outbound).
+
+Ingestion rules:
+- Unified video entity: each asset (uploaded file or live stream) is a first-class video/stream record; store source (upload, live, API), status, and storage references.
+- Isolate ingestion adapters behind a common interface (e.g. ingest video, register stream, enqueue job) so pipeline logic does not depend on a specific source.
+- Incoming webhooks must validate signatures/tokens and route to a single ingestion or callback pipeline.
+- Do not hardcode S3 buckets, stream keys, or webhook secrets; use configuration and env.
+
+Live stream–specific:
+- Use stable identifiers for streams; handle reconnection and idempotency where applicable.
+- Rate limiting and validation on public ingestion endpoints to prevent abuse.
+
+Do not:
+- Put source-specific logic (e.g. S3 path rules, stream protocol details) in core moderation or analysis services.
+- Assume a single ingestion path; design for upload, live, and API from the start.

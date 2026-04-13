@@ -1,0 +1,31 @@
+---
+description: Redis caching, Celery broker, and coordination rules
+globs: backend/**, app/workers/**, app/core/**, cache/**
+---
+
+Redis usage (VidShield AI):
+- Use Redis for caching, rate limiting, session-like ephemeral state, and as Celery broker.
+- Choose TTLs intentionally.
+- Cache only what has a clear performance benefit (e.g. video metadata, job status, policy cache).
+- Make cache invalidation explicit.
+
+Rules:
+- Wrap Redis access in dedicated utilities/services.
+- Use stable key naming conventions (e.g. by tenant, video_id, job_id).
+- Document key patterns if introducing new families of keys.
+- Prefer idempotent worker/job behavior for video processing, moderation tasks, and notifications.
+- Use retries carefully and avoid infinite retry loops.
+
+Caching expectations:
+- Cache expensive reads and repeated metadata lookups where appropriate.
+- Do not cache highly sensitive data unless encrypted and justified.
+- Do not rely on cache as the only source of truth for critical persistent state (videos, moderation results).
+
+Event/queue (when used):
+- Use AWS SQS or Redis-backed Celery for durable async processing (video pipeline, moderation workflow, analytics) per ARCHITECTURE.md.
+- Keep Redis for low-latency coordination, rate limiting, and Celery broker; use SQS for high-throughput durable pipelines if needed.
+
+Do not:
+- Scatter raw Redis calls across the codebase.
+- Store large unbounded payloads without TTL or cleanup strategy.
+- Mix queue semantics and cache semantics without clarity.

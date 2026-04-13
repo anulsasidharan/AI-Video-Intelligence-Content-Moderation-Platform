@@ -1,0 +1,47 @@
+---
+description: Interfaces — Admin/Operator web, API consumers (platforms), optional partner/mobile
+alwaysApply: true
+---
+
+This project has defined user-facing and API interfaces. All features, APIs, and docs must account for them.
+
+## 1. Admin / Operator (Web)
+
+- **Purpose:** Internal users (admins, operators) configure and monitor the VidShield AI system.
+- **Stack:** Next.js + TypeScript (same web app, with role-based routes and layout).
+- **Scope:** Video catalog, moderation queue, policy management, live stream monitoring, analytics dashboards, system settings, API key management, alert configuration.
+- **Access:** RBAC; admin/operator role only; not exposed to end viewers.
+- **Where:** Served from the same Next.js app under routes reserved for admin (e.g. `/admin/*`, or dashboard routes with role checks).
+
+## 2. User / Dashboard (Web)
+
+- **Purpose:** Operators and platform users manage videos, view moderation results, and access analytics.
+- **Stack:** Next.js + TypeScript.
+- **Scope:** Dashboard, video list/detail, upload, moderation queue, review panel, policies, live streams, analytics, settings.
+- **Access:** Authenticated users; same backend APIs.
+- **Where:** Same Next.js app (e.g. `/`, `/dashboard`, `/videos`, `/moderation`, `/live`, `/analytics`).
+
+## 3. API Consumers (Platforms / Partners)
+
+- **Purpose:** YouTube-like platforms, edtech, social media, or surveillance systems integrate via REST and webhooks.
+- **Stack:** REST API (`/api/v1/`), optional WebSocket for live status; API keys or JWT.
+- **Scope:** Video submission, ingestion callbacks, moderation results, webhooks for policy violations and alerts.
+- **Access:** API key or OAuth; document in API_SPEC.md.
+- **Where:** FastAPI backend; no separate codebase; optional SDK or OpenAPI client.
+
+## 4. Optional: Native Mobile / Partner UIs
+
+- **Purpose:** Optional mobile or third-party UIs for monitoring or lightweight review.
+- **Stack:** Any client consuming the same FastAPI backend via REST/WebSocket.
+- **Scope:** Read-only or limited write per API_SPEC; no admin configuration in mobile; admin is web-only.
+- **Where:** Separate codebase if present; document mobile-specific needs (e.g. push, app version header) in API_SPEC and DEPLOYMENT.
+
+## Rules
+
+- **Backend:** One API surface serves web and API consumers; use RBAC and scopes to distinguish admin vs operator vs API key.
+- **Web (Next.js):** Single app for Admin and User/Dashboard; separate routes/layouts and role checks; shared design system and API client.
+- **Docs:** PRD, ARCHITECTURE, API_SPEC, DB_SCHEMA, and DEPLOYMENT must reference these interfaces where relevant.
+
+Do not:
+- Build admin-only flows in a partner/mobile app if present.
+- Assume only one frontend; account for API consumers and optional mobile in contracts and docs.

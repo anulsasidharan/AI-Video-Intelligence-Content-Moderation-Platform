@@ -1,0 +1,36 @@
+---
+description: Docker, CI/CD, and AWS deployment rules
+globs: infra/**, docker/**, .github/**, deployment/**, terraform/**, ecs/**, aws/**
+---
+
+Deployment stack (VidShield AI, per CLAUDE.md):
+- Docker for packaging (frontend, backend, workers).
+- AWS for deployment: ECS Fargate, ALB, CloudFront, RDS (PostgreSQL), ElastiCache (Redis), S3, SQS, Lambda, ECR.
+- CI/CD: GitHub Actions, Terraform, AWS CDK.
+- Monitoring: CloudWatch, Prometheus, Grafana, Sentry.
+- All secrets via AWS Secrets Manager or env; local via `.env` (gitignored).
+
+DevOps rules:
+- Applications must be container-friendly and stateless where possible (backend and workers).
+- Keep builds reproducible; use environment-driven configuration.
+- Separate build-time config from runtime config.
+- Add health checks for API and workers; ensure logs are structured and production-usable.
+- Support observability: system logs, pipeline monitoring, latency, error tracking, usage analytics (see observability rule).
+
+Docker expectations:
+- Keep Dockerfiles clean and optimized; prefer multi-stage builds when useful.
+- Avoid baking secrets into images; minimize image size where practical.
+
+AWS expectations:
+- Prefer managed services (ECS Fargate, RDS PostgreSQL, ElastiCache Redis, S3, SQS, CloudFront) per DEPLOYMENT.md.
+- Use least-privilege IAM policies; make networking and environment assumptions explicit.
+- Support observability via logs, metrics, and alarms; design for rollback-safe deployments.
+
+CI/CD expectations:
+- Run lint, tests, and build validation before merge/deploy.
+- Keep deployment config version-controlled; use separate environments (e.g. dev, staging, prod via terraform environments).
+
+Do not:
+- Hardcode AWS resource IDs, RDS URLs, or OpenAI/S3/Pinecone secrets in code.
+- Mix deployment-only hacks into application logic.
+- Assume local-only paths or config in production code.

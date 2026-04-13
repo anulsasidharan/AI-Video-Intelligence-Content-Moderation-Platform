@@ -1,0 +1,35 @@
+---
+description: Security, compliance, and PII rules for the entire repository
+alwaysApply: true
+---
+
+Security rules:
+- Never hardcode secrets, API keys, tokens, credentials, or private URLs (OpenAI, Whisper, S3, Pinecone, PostgreSQL, Redis, etc.).
+- Never log passwords, tokens, raw secrets, or sensitive user content (including PII in transcripts).
+- Validate and sanitize all user inputs (upload metadata, webhooks, API payloads, policy config).
+- Treat uploads, URLs, prompts, and external content as untrusted.
+- Enforce authentication and authorization on protected resources; use role-based access control (RBAC).
+- Use least-privilege access patterns; add rate limiting to sensitive or expensive endpoints (upload, ingestion, webhooks).
+- Use secure defaults.
+
+Compliance and PII (see PRD Security & Compliance):
+- Implement PII detection and data masking where required (e.g. in transcripts or metadata).
+- Maintain audit logs for sensitive actions (video access, policy changes, API key usage, moderation overrides).
+- Design for GDPR compliance (data export, deletion, retention) where applicable.
+- Secure API authentication (e.g. API keys, JWT) for developer and partner APIs.
+
+AI-specific security:
+- Add prompt injection resistance where relevant (e.g. user-provided policy text or labels).
+- Validate tool inputs and outputs; restrict tool access by policy.
+- Protect system instructions and internal configuration.
+- Handle unsafe model output before persisting or returning to clients.
+
+Video and storage:
+- Validate and constrain upload types and sizes; scan for malicious content where feasible.
+- Prefer environment variables and secret managers (e.g. AWS Secrets Manager) for production.
+- Do not expose internal services or storage URLs publicly unless required.
+
+Do not:
+- Assume client-side validation is enough.
+- Return internal exception details to users.
+- Trust LLM output without validation in critical paths (e.g. moderation decision persistence).

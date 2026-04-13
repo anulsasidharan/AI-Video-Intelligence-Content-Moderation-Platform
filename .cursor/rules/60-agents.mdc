@@ -1,0 +1,36 @@
+---
+description: AI agents (LangGraph), video analysis pipeline, and tools
+globs: backend/app/ai/agents/**, backend/app/ai/chains/**, backend/app/ai/graphs/**, backend/app/ai/tools/**
+---
+
+Product context (VidShield AI):
+- LangGraph-orchestrated multi-agent pipeline for video analysis and content moderation.
+- Agents: Orchestrator, Content Analyzer, Safety Checker, Metadata Extractor, Scene Classifier, Report Generator.
+- Tools: frame extractor, audio transcriber (Whisper), OCR, object detector, similarity search (Pinecone); all behind a validated tool layer.
+
+Agent system architecture (per CLAUDE.md):
+- **Orchestrator:** receives video analysis requests; delegates to specialist agents.
+- **Content Analyzer:** GPT-4o vision on sampled frames for scene/content understanding.
+- **Safety Checker:** policy-aware moderation using configurable rule sets.
+- **Metadata Extractor:** entities, topics, brands, text (OCR) from frames + transcript.
+- **Scene Classifier:** categorizes scenes (violence, nudity, drugs, hate symbols, etc.).
+- **Report Generator:** synthesizes agent outputs into structured moderation report.
+- All agents are autonomous; no human-in-the-loop required for standard moderation decisions; escalation configurable per policy.
+
+Agent rules:
+- Agents must not directly access databases or external APIs except through a defined tool layer.
+- Prompts must be templated and stored in app/ai/prompts/; keep separate from orchestration logic.
+- Keep critical workflow steps (policy evaluation, escalation) deterministic where possible.
+- Add output validation and fallback behavior; use structured schemas for agent outputs in production.
+- Use LangGraph for multi-agent coordination and state flow (video_analysis_graph, moderation_workflow).
+- Support configurable escalation to human review per policy.
+
+Tooling rules:
+- Every tool must have: clear purpose, input schema, output schema, failure behavior.
+- Tools must be side-effect aware; sensitive tools must enforce auth and authorization.
+- Validate tool inputs and outputs; restrict tool access by policy (security rule).
+
+Do not:
+- Let agents perform unrestricted actions.
+- Hide tool errors.
+- Mix prompt text deeply into service/business code.

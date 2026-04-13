@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python -m pytest tests/test_ai/test_summary_chain.py tests/test_ai/test_insight_chain.py tests/test_ai/test_moderation_chain.py tests/test_ai/test_moderation_workflow.py -x -q)",
+      "Bash(wc -l backend/app/api/v1/*.py)",
+      "Bash(wc -l backend/app/services/*.py)",
+      "Bash(wc -l backend/app/models/*.py)",
+      "Bash(wc -l backend/app/schemas/*.py)",
+      "Bash(wc -l backend/app/ai/agents/*.py)",
+      "Bash(wc -l backend/app/ai/chains/*.py)",
+      "Bash(wc -l backend/app/ai/graphs/*.py)",
+      "Bash(wc -l backend/app/ai/tools/*.py)",
+      "Bash(wc -l backend/app/ai/prompts/*.py)",
+      "Bash(wc -l backend/app/workers/*.py)",
+      "Bash(find backend/app/api/v1 -name \"*.py\" -exec wc -l {} +)",
+      "Bash(python -m pytest --tb=no -q)",
+      "Bash(npm test:*)",
+      "Bash(python -m pytest --tb=no -q --co)",
+      "Bash(python -m pytest tests/test_api --tb=no -q)",
+      "Bash(python -m pytest tests/test_services --tb=no -q)",
+      "Bash(python -m pytest tests/test_models --tb=no -q)",
+      "Bash(python -m pytest tests/test_ai --tb=no -q)",
+      "Bash(python -m pytest tests/test_workers --tb=no -q)",
+      "Bash(docker push:*)",
+      "Bash(aws ecs:*)",
+      "Bash(docker compose:*)",
+      "Bash(MSYS_NO_PATHCONV=1 aws logs get-log-events --log-group-name \"/ecs/vidshieldai-prod/frontend\" --log-stream-name \"frontend/frontend/08b5a9b271aa4b17b2f9dae952350428\" --region us-east-1 --limit 30 --profile vidshieldai-deploy --query 'events[*].message' --output text)",
+      "Bash(aws secretsmanager put-secret-value:*)",
+      "Bash(curl -s -X POST \"http://vidshieldai-prod-alb-1370282192.us-east-1.elb.amazonaws.com/api/v1/auth/register\" -H \"Content-Type: application/json\" -d '{\"email\":\"admin@orionvexa.ca\",\"name\":\"Admin User\",\"password\":\"Admin1234!\"}' --max-time 15 -w \"\\\\nHTTP: %{http_code} TIME: %{time_total}s\")",
+      "Bash(docker exec project-6-ai-video-intelligence-content-moderation-platform-backend-1:*)",
+      "Bash(gh run:*)"
+    ]
+  }
+}

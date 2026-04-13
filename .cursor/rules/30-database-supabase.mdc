@@ -1,0 +1,35 @@
+---
+description: PostgreSQL and persistence rules (SQLAlchemy, Alembic)
+globs: backend/app/models/**, backend/app/repositories/**, alembic/**, db/**
+---
+
+Database stack (VidShield AI):
+- PostgreSQL 16 as the source of truth for structured application data.
+- SQLAlchemy 2.0 for ORM; Alembic for migrations.
+- Use row-level access control or tenant scoping where multi-tenant or sensitive data is required.
+
+Database rules:
+- Design tables with clear ownership, timestamps, and constraints.
+- Add indexes for common filters and joins (videos, moderation_results, policies, alerts, streams).
+- Use foreign keys where appropriate.
+- Prefer soft-delete only when there is a real product need (e.g. audit).
+
+Schema design expectations:
+- Every core entity should have: id, created_at, updated_at.
+- For multi-tenant systems, include tenant/organization isolation where relevant.
+- Use enums or constrained fields for finite states (video status, moderation status, policy type, alert severity, etc.).
+- Keep schemas normalized unless denormalization is justified by performance.
+- Align entity design with docs/DB_SCHEMA.md (users, videos, streams, moderation_results, policies, alerts, analytics, etc.).
+
+Repository rules:
+- All DB access must go through repositories or a data-access layer.
+- Keep query code out of routes and services unless trivial and already patterned.
+- Parameterize queries; avoid N+1 patterns.
+- Use transactions when multiple writes must succeed together.
+- Do not rely on raw DB client in route handlers; wrap in repositories.
+
+Do not:
+- Write raw SQL inside controllers/routes.
+- Make schema changes without Alembic migration files.
+- Assume single-tenant if the product is multi-tenant.
+- Hardcode database URL or credentials in code; use environment configuration.

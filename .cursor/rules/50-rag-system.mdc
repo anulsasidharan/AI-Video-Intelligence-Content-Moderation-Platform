@@ -1,0 +1,30 @@
+---
+description: Vector store (Pinecone), embeddings, and similarity search for VidShield AI
+globs: backend/app/ai/**, backend/app/services/*embed*, backend/app/services/*vector*, retrieval/**, embeddings/**
+---
+
+AI/vector stack (VidShield AI):
+- OpenAI API for embeddings (e.g. frame or text embeddings).
+- Pinecone for vector search (e.g. similarity search against known bad content, or metadata retrieval).
+- Optional: RAG-style retrieval over policy docs or knowledge base for agent context.
+
+Vector architecture:
+- Separate embedding generation, indexing, retrieval, and consumption by agents/chains.
+- Keep retrieval logic independent from moderation decision logic where possible.
+- Preserve source metadata for traceability (video_id, frame timestamp, policy_id).
+
+Rules:
+- Never dump raw full documents or full video metadata into prompts when chunking/embedding is expected.
+- Use deterministic embedding and indexing strategies unless explicitly experimenting.
+- Maintain metadata: source, video_id, timestamp, tenant, policy context.
+- Prefer configurable retrieval parameters: top_k, filters, score thresholds.
+- Support similarity search for known violations or reference content; use in safety_checker or report_generator as needed.
+
+Knowledge/reference data (if used):
+- Support ingestion of reference content (e.g. known bad frames, policy snippets); normalize and sanitize; preserve version/identity.
+- Ground moderation or reporting in retrieved context; handle no-context and low-confidence gracefully.
+
+Do not:
+- Mix ingestion code with runtime moderation/analysis in the same module.
+- Make retrieval behavior impossible to inspect or tune.
+- Hide retrieval failures silently.

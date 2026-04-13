@@ -1,0 +1,26 @@
+---
+description: Save every user prompt in this project to prompt history
+alwaysApply: true
+---
+
+Prompt persistence (this project only):
+- Whenever a user sends a prompt (their message or query) in this project, save that prompt.
+- Save by appending to the project's prompt history file: **prompts/prompt-history.md**.
+- Each entry must include:
+  - **Timestamp:** ISO 8601 UTC (e.g. `2025-03-08T14:30:00Z`).
+  - **Prompt:** The user's exact message text (escape or fence markdown if needed so the file remains valid).
+- Format per entry:
+  ```markdown
+  ### YYYY-MM-DD HH:MM UTC
+  [Timestamp: ISO8601]
+  [Prompt:]
+  <user's message>
+  ---
+  ```
+- Create the file and/or the **prompts/** directory if they do not exist, then append the new entry.
+- Perform this save at the beginning of your response, before any other edits or answers, so every prompt in this project is persisted for audit, learning, or replay.
+
+Do not:
+- Skip saving because the prompt seems short or trivial.
+- Save secrets, tokens, or passwords if the user accidentally included them; redact those and save the rest.
+- Overwrite or delete existing entries in prompt-history.md; only append.

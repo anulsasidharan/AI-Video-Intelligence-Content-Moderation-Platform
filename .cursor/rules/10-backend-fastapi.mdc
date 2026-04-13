@@ -1,0 +1,59 @@
+---
+description: FastAPI backend rules
+globs: backend/**, api/**, app/**.py
+---
+
+Backend stack:
+- Python 3.12
+- FastAPI, Uvicorn
+- Pydantic, SQLAlchemy 2.0, Alembic
+- PostgreSQL 16 for persistence
+- Redis 7 for cache, rate limiting, and Celery broker
+- Celery for async video and moderation tasks
+- OpenAI GPT-4o / GPT-4o-mini (vision + text), Whisper, LangChain 0.2+, LangGraph
+- FFmpeg, OpenCV, PyAV for video processing
+- AWS S3 for video, thumbnails, and artifacts
+- Pinecone for vector store (similarity search, embeddings)
+- WebSockets for real-time live stream status and moderation alerts
+- AWS SQS for durable async pipelines where required
+
+Backend rules:
+- Use clean architecture.
+- Routes/controllers should only handle HTTP/WebSocket concerns.
+- Business logic must live in services (video, moderation, analytics, storage, stream).
+- Database access must live in repositories.
+- Validation must be done using Pydantic schemas/models.
+- Use dependency injection patterns where appropriate.
+- Use async I/O for external calls (OpenAI, S3, Pinecone, DB).
+- Use pagination for list endpoints (videos, moderation queue, alerts).
+- Use consistent response models and error envelope `{ error: { code, message, details } }`.
+- Support WebSocket endpoints for live stream and moderation updates per API_SPEC.md.
+
+Preferred backend structure (per CLAUDE.md):
+- app/api/v1/          (auth, videos, moderation, analytics, live, policies, webhooks)
+- app/models/          (user, video, moderation, policy, analytics, alert)
+- app/schemas/
+- app/services/        (auth, video, moderation, analytics, storage, notification, stream)
+- app/ai/agents/       (orchestrator, content_analyzer, safety_checker, metadata_extractor, scene_classifier, report_generator)
+- app/ai/chains/       (moderation_chain, insight_chain, summary_chain)
+- app/ai/graphs/       (video_analysis_graph, moderation_workflow)
+- app/ai/tools/        (frame_extractor, audio_transcriber, ocr_tool, object_detector, similarity_search)
+- app/ai/prompts/
+- app/workers/         (celery_app, video_tasks, moderation_tasks, analytics_tasks, cleanup_tasks)
+- app/core/            (security, exceptions, middleware, logging)
+- app/utils/
+
+Coding expectations:
+- Add type hints to functions.
+- Add docstrings for non-trivial service methods.
+- Keep routes thin and declarative.
+- Keep service methods focused and testable.
+- Reuse existing utilities before creating new ones.
+- Isolate video processing and AI agent logic behind clear interfaces.
+
+Do not:
+- Put SQL or ORM-heavy logic inside route files.
+- Put business logic inside Pydantic schemas.
+- Put environment variables directly across many files; centralize config.
+- Mix unrelated domains in the same service file.
+- Hardcode OpenAI keys, S3 credentials, or DB URLs; use config/env.

@@ -1,0 +1,22 @@
+---
+description: Video processing — FFmpeg, OpenCV, PyAV (frame extraction, thumbnails, live ingest)
+globs: backend/app/utils/video*, backend/app/utils/image*, backend/app/ai/tools/frame*, backend/app/services/video*, backend/app/workers/video*
+---
+
+Video processing stack (per CLAUDE.md):
+- FFmpeg for transcoding, thumbnail generation, and segment extraction.
+- OpenCV and PyAV for decode, frame sampling, and image operations.
+- Frame extraction at configurable intervals for AI analysis; output to temp storage or S3.
+- Live stream: ingest segments or frames for real-time/near-real-time pipeline.
+
+Rules:
+- Centralize video decode and frame extraction in dedicated utils or tools (e.g. app/utils/video_utils.py, app/ai/tools/frame_extractor.py).
+- Do not block HTTP request path with heavy processing; use Celery tasks for upload processing and batch frame extraction.
+- Validate input formats and codecs; enforce size and duration limits to avoid resource exhaustion.
+- Store artifacts (thumbnails, sampled frames, segments) in S3 with consistent naming and TTL/retention where applicable.
+- Use stable, reproducible sampling (e.g. by time interval or keyframe) so results are auditable.
+
+Do not:
+- Hardcode paths or bucket names; use config and env.
+- Run unbounded FFmpeg/OpenCV jobs in the API process.
+- Mix format-specific logic (e.g. RTMP vs HLS) in core analysis services; isolate in ingest/stream layer.

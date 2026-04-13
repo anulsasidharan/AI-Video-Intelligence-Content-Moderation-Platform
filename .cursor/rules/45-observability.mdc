@@ -1,0 +1,27 @@
+---
+description: Observability, monitoring, and analytics for VidShield AI
+globs: backend/app/core/logging*, backend/app/core/metrics*, infra/monitoring/**, frontend/src/**/analytics*
+---
+
+Observability scope (see PRD):
+- System logs (structured, with correlation IDs for requests, jobs, and video/stream IDs).
+- AI pipeline monitoring (latency, token usage, model, errors for GPT-4o/Whisper).
+- Latency monitoring for API, video processing, moderation pipeline, and storage.
+- Error tracking (e.g. centralized error reporting such as Sentry).
+- Usage analytics (videos processed, moderation throughput, policy violations, alerts fired).
+
+Dashboard and reporting:
+- Analytics: throughput, violation rates, policy effectiveness, live stream health, processing latency.
+- Real-time: live stream status, moderation queue depth, alert banners.
+- Expose metrics in a form consumable by CloudWatch, Prometheus, or Grafana; keep dashboards defined in code or config where possible.
+
+Rules:
+- Use structured logging (JSON or key-value) with consistent fields: request_id, video_id, stream_id, job_id, user_id, level, message, duration_ms.
+- Do not log PII, passwords, or raw tokens; mask or redact in log pipelines if needed.
+- Instrument critical paths: frame extraction, Whisper calls, LLM/vision calls, moderation workflow, S3 operations, webhook delivery.
+- Alerts for critical failures (e.g. pipeline down, OpenAI errors above threshold, queue backlog); avoid alert fatigue.
+
+Do not:
+- Rely on ad-hoc print statements for production diagnostics.
+- Expose internal error details or stack traces to end-users; keep detailed errors in logs only.
+- Add observability as an afterthought; include logging and metrics in new features by default.

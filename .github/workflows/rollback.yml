@@ -1,0 +1,303 @@
+name: Rollback — Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      rollback_tag:
+        description: "Image tag to roll back to (e.g. v1.2.3 or a git SHA)"
+        required: true
+      services:
+        description: "Services to roll back (comma-separated: api,worker,frontend — or 'all')"
+        required: false
+        default: "all"
+      reason:
+        description: "Reason for rollback (logged in summary)"
+        required: true
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  ROLLBACK_TAG: ${{ github.event.inputs.rollback_tag }}
+  ECS_CLUSTER: vidshieldai-cluster-prod
+  ECS_BACKEND_SERVICE: vidshield-prod-api
+  ECS_WORKER_SERVICE: vidshield-prod-worker
+  ECS_FRONTEND_SERVICE: vidshield-prod-frontend
+  TASK_DEF_API: vidshield-prod-api
+  TASK_DEF_WORKER: vidshield-prod-worker
+  TASK_DEF_FRONTEND: vidshield-prod-frontend
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Validate rollback target ────────────────────────────────────────────────────
+  validate:
+    name: Validate Rollback Target
+    runs-on: ubuntu-latest
+
+    outputs:
+      rollback_api: ${{ steps.parse.outputs.rollback_api }}
+      rollback_worker: ${{ steps.parse.outputs.rollback_worker }}
+      rollback_frontend: ${{ steps.parse.outputs.rollback_frontend }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Parse target services
+        id: parse
+        run: |
+          SERVICES="${{ github.event.inputs.services }}"
+          if [ "$SERVICES" = "all" ]; then
+            echo "rollback_api=true"     >> "$GITHUB_OUTPUT"
+            echo "rollback_worker=true"  >> "$GITHUB_OUTPUT"
+            echo "rollback_frontend=true" >> "$GITHUB_OUTPUT"
+          else
+            [[ "$SERVICES" == *"api"*      ]] && echo "rollback_api=true"      >> "$GITHUB_OUTPUT" || echo "rollback_api=false"      >> "$GITHUB_OUTPUT"
+            [[ "$SERVICES" == *"worker"*   ]] && echo "rollback_worker=true"   >> "$GITHUB_OUTPUT" || echo "rollback_worker=false"   >> "$GITHUB_OUTPUT"
+            [[ "$SERVICES" == *"frontend"* ]] && echo "rollback_frontend=true" >> "$GITHUB_OUTPUT" || echo "rollback_frontend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify backend image exists in ECR
+        if: steps.parse.outputs.rollback_api == 'true' || steps.parse.outputs.rollback_worker == 'true'
+        run: |
+          aws ecr describe-images \
+            --repository-name vidshieldai-backend-prod \
+            --image-ids imageTag=${{ env.ROLLBACK_TAG }} \
+            --region ${{ env.AWS_REGION }} \
+            || (echo "ERROR: backend image tag '${{ env.ROLLBACK_TAG }}' not found in ECR" && exit 1)
+
+      - name: Verify frontend image exists in ECR
+        if: steps.parse.outputs.rollback_frontend == 'true'
+        run: |
+          aws ecr describe-images \
+            --repository-name vidshieldai-frontend-prod \
+            --image-ids imageTag=${{ env.ROLLBACK_TAG }} \
+            --region ${{ env.AWS_REGION }} \
+            || (echo "ERROR: frontend image tag '${{ env.ROLLBACK_TAG }}' not found in ECR" && exit 1)
+
+  # ── Snapshot current task definition ARNs (for audit trail) ────────────────────
+  snapshot:
+    name: Snapshot Current Task Defs
+    runs-on: ubuntu-latest
+    needs: validate
+
+    outputs:
+      current_api_arn:      ${{ steps.snap.outputs.current_api_arn }}
+      current_worker_arn:   ${{ steps.snap.outputs.current_worker_arn }}
+      current_frontend_arn: ${{ steps.snap.outputs.current_frontend_arn }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Record current active task definition ARNs
+        id: snap
+        run: |
+          API_ARN=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_BACKEND_SERVICE }} \
+            --query 'services[0].taskDefinition' --output text)
+
+          WORKER_ARN=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_WORKER_SERVICE }} \
+            --query 'services[0].taskDefinition' --output text)
+
+          FRONTEND_ARN=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_FRONTEND_SERVICE }} \
+            --query 'services[0].taskDefinition' --output text)
+
+          echo "current_api_arn=$API_ARN"           >> "$GITHUB_OUTPUT"
+          echo "current_worker_arn=$WORKER_ARN"     >> "$GITHUB_OUTPUT"
+          echo "current_frontend_arn=$FRONTEND_ARN" >> "$GITHUB_OUTPUT"
+
+          echo "### Current Task Definitions (pre-rollback)" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service  | Active Task Definition ARN |"   >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|----------------------------|"   >> "$GITHUB_STEP_SUMMARY"
+          echo "| API      | \`$API_ARN\` |"                >> "$GITHUB_STEP_SUMMARY"
+          echo "| Worker   | \`$WORKER_ARN\` |"             >> "$GITHUB_STEP_SUMMARY"
+          echo "| Frontend | \`$FRONTEND_ARN\` |"           >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Roll back ECS services ──────────────────────────────────────────────────────
+  rollback-ecs:
+    name: Rollback ECS — Production
+    runs-on: ubuntu-latest
+    needs: [validate, snapshot]
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ── Register rollback task definitions ──────────────────────────────────────
+      - name: Register rollback task def — Backend API
+        id: register-api
+        if: needs.validate.outputs.rollback_api == 'true'
+        run: |
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition ${{ env.TASK_DEF_API }} \
+            --query 'taskDefinition' --output json)
+          NEW_TD=$(echo "$CURRENT" | python3 -c "
+          import json, sys
+          td = json.load(sys.stdin)
+          for c in td['containerDefinitions']:
+              if 'vidshieldai-backend-prod' in c['image']:
+                  c['image'] = c['image'].rsplit(':', 1)[0] + ':${{ env.ROLLBACK_TAG }}'
+          for key in ['taskDefinitionArn','revision','status','requiresAttributes',
+                      'compatibilities','registeredAt','registeredBy','deregisteredAt']:
+              td.pop(key, None)
+          print(json.dumps(td))
+          ")
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TD" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Register rollback task def — Worker
+        id: register-worker
+        if: needs.validate.outputs.rollback_worker == 'true'
+        run: |
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition ${{ env.TASK_DEF_WORKER }} \
+            --query 'taskDefinition' --output json)
+          NEW_TD=$(echo "$CURRENT" | python3 -c "
+          import json, sys
+          td = json.load(sys.stdin)
+          for c in td['containerDefinitions']:
+              if 'vidshieldai-agent-prod' in c['image']:
+                  c['image'] = c['image'].rsplit(':', 1)[0] + ':${{ env.ROLLBACK_TAG }}'
+          for key in ['taskDefinitionArn','revision','status','requiresAttributes',
+                      'compatibilities','registeredAt','registeredBy','deregisteredAt']:
+              td.pop(key, None)
+          print(json.dumps(td))
+          ")
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TD" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Register rollback task def — Frontend
+        id: register-frontend
+        if: needs.validate.outputs.rollback_frontend == 'true'
+        run: |
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition ${{ env.TASK_DEF_FRONTEND }} \
+            --query 'taskDefinition' --output json)
+          NEW_TD=$(echo "$CURRENT" | python3 -c "
+          import json, sys
+          td = json.load(sys.stdin)
+          for c in td['containerDefinitions']:
+              if 'vidshieldai-frontend-prod' in c['image']:
+                  c['image'] = c['image'].rsplit(':', 1)[0] + ':${{ env.ROLLBACK_TAG }}'
+          for key in ['taskDefinitionArn','revision','status','requiresAttributes',
+                      'compatibilities','registeredAt','registeredBy','deregisteredAt']:
+              td.pop(key, None)
+          print(json.dumps(td))
+          ")
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TD" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
+
+      # ── Update services ─────────────────────────────────────────────────────────
+      - name: Rollback — Backend API
+        if: needs.validate.outputs.rollback_api == 'true'
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_BACKEND_SERVICE }} \
+            --task-definition ${{ steps.register-api.outputs.arn }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Rollback — Worker
+        if: needs.validate.outputs.rollback_worker == 'true'
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_WORKER_SERVICE }} \
+            --task-definition ${{ steps.register-worker.outputs.arn }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Rollback — Frontend
+        if: needs.validate.outputs.rollback_frontend == 'true'
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_FRONTEND_SERVICE }} \
+            --task-definition ${{ steps.register-frontend.outputs.arn }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      # ── Wait for stability ───────────────────────────────────────────────────────
+      - name: Wait for Backend API stability
+        if: needs.validate.outputs.rollback_api == 'true'
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_BACKEND_SERVICE }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for Frontend stability
+        if: needs.validate.outputs.rollback_frontend == 'true'
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_FRONTEND_SERVICE }} \
+            --region ${{ env.AWS_REGION }}
+
+      # ── Invalidate CloudFront (frontend rolled back) ─────────────────────────────
+      - name: Invalidate CloudFront cache
+        if: needs.validate.outputs.rollback_frontend == 'true' && vars.CLOUDFRONT_DISTRIBUTION_ID_PROD != ''
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ vars.CLOUDFRONT_DISTRIBUTION_ID_PROD }} \
+            --paths "/*"
+
+  # ── Post-rollback summary ───────────────────────────────────────────────────────
+  summary:
+    name: Rollback Summary
+    runs-on: ubuntu-latest
+    needs: [validate, snapshot, rollback-ecs]
+    if: always()
+
+    steps:
+      - name: Write summary
+        run: |
+          echo "## Rollback Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field    | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Rollback tag | \`${{ env.ROLLBACK_TAG }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Services     | \`${{ github.event.inputs.services }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered by | \`${{ github.actor }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Reason       | ${{ github.event.inputs.reason }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Status       | ${{ needs.rollback-ecs.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Pre-rollback Task Definitions" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service  | ARN |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-----|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| API      | \`${{ needs.snapshot.outputs.current_api_arn }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Worker   | \`${{ needs.snapshot.outputs.current_worker_arn }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Frontend | \`${{ needs.snapshot.outputs.current_frontend_arn }}\` |" >> "$GITHUB_STEP_SUMMARY"

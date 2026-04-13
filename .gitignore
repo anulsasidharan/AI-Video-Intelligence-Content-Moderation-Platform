@@ -1,0 +1,237 @@
+# ============================================================
+# VidShield AI — .gitignore
+# ============================================================
+
+# ────────────────────────────────────────────────────────────
+# Project-specific files
+# ────────────────────────────────────────────────────────────
+git-branching-guide.md
+
+# ────────────────────────────────────────────────────────────
+# Environment & secrets — NEVER commit these
+# ────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+k8s/03-secrets.yaml
+service-account*.json
+
+# ────────────────────────────────────────────────────────────
+# Frontend — Next.js
+# ────────────────────────────────────────────────────────────
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.js
+frontend/.yarn/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.eslintcache
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+frontend/.jest-cache/
+frontend/jest-results/
+frontend/.vercel
+frontend/next-env.d.ts
+
+# ────────────────────────────────────────────────────────────
+# Backend — Python / FastAPI
+# ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+cover/
+*.mo
+*.pot
+backend/.venv/
+backend/venv/
+backend/env/
+backend/.env
+backend/celerybeat-schedule
+backend/celerybeat.pid
+
+# ────────────────────────────────────────────────────────────
+# Database & migrations artefacts
+# ────────────────────────────────────────────────────────────
+*.db
+*.sqlite3
+alembic/versions/*.pyc
+
+# ────────────────────────────────────────────────────────────
+# Docker
+# ────────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ────────────────────────────────────────────────────────────
+# Terraform
+# ────────────────────────────────────────────────────────────
+# Provider/plugin cache directories (any depth under terraform/)
+terraform/**/.terraform/
+terraform/.terraform/
+# Dependency lock files — not committed; regenerated per environment
+terraform/**/.terraform.lock.hcl
+terraform/.terraform.lock.hcl
+# State files — always in remote backend (S3), never local
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfstate.backup
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/*.tfstate.backup
+# Generated plan files
+*.tfplan
+terraform/crash.log
+terraform/override.tf
+terraform/override.tf.json
+terraform/*_override.tf
+terraform/*_override.tf.json
+terraform/.terraformrc
+terraform/terraform.rc
+# NOTE: terraform/environments/*.tfvars ARE tracked (no secrets, only sizes/config)
+# Secrets must be passed via TF_VAR_* env vars or AWS Secrets Manager
+
+# ────────────────────────────────────────────────────────────
+# IDE & editors
+# ────────────────────────────────────────────────────────────
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ────────────────────────────────────────────────────────────
+# OS
+# ────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# ────────────────────────────────────────────────────────────
+# Logs
+# ────────────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ────────────────────────────────────────────────────────────
+# AI / ML — model artefacts & data
+# ────────────────────────────────────────────────────────────
+# Model weights & checkpoints
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.pb
+*.h5
+*.bin
+/models/
+checkpoints/
+weights/
+
+# Vector store / embeddings cache
+pinecone_cache/
+embeddings_cache/
+*.faiss
+*.index
+
+# LangChain / LangGraph cache
+.langchain/
+langchain_cache/
+langgraph_cache/
+langchain.db
+
+# LangSmith tracing (never commit API keys or trace exports)
+langsmith_traces/
+.langsmith
+
+# Video & audio processing artefacts
+frames/
+thumbnails/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wav
+*.mp3
+*.m4a
+backend/app/ai/data/
+backend/tmp_frames/
+
+# OpenAI / API response caches (never store real API responses in repo)
+openai_cache/
+response_cache/
+
+# ────────────────────────────────────────────────────────────
+# Mock data — local dev persistence (never commit user data)
+# ────────────────────────────────────────────────────────────
+frontend/.mock-data/
+
+# ────────────────────────────────────────────────────────────
+# Misc / temp
+# ────────────────────────────────────────────────────────────
+*.tmp
+*.temp
+*.bak
+*.orig
+.turbo/
+.cache/
+tmp/
+temp/
+
+# ────────────────────────────────────────────────────────────
+# Misc / files
+# ────────────────────────────────────────────────────────────
+
+AWS-deployment-guide.md
+git_fork_guide.md
+git-branching-guide.md
+task.md
+# Landing page / static assets (generated)
+# ────────────────────────────────────────────────────────────
+# Next.js static export output (if using next export)
+frontend/out/
+# Storybook build output (if added later)
+frontend/storybook-static/
+# Bundle analysis reports
+frontend/.next/analyze/
+frontend/bundle-analyzer-report.html

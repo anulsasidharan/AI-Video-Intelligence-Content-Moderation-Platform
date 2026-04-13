@@ -1,0 +1,22 @@
+---
+description: Webhooks, platform callbacks, and external integrations
+globs: backend/app/api/**/webhooks*, backend/app/services/notification*, backend/app/integrations/**
+---
+
+Integration scope (see PRD):
+- **Outbound webhooks:** Notify platforms or partners on moderation results, policy violations, alerts, and stream status; retries and signature verification.
+- **Inbound webhooks:** Optional ingestion or callback endpoints from platforms (e.g. upload complete, stream event).
+- **Developer API:** REST and optional WebSocket per API_SPEC.md; secure with API keys or OAuth.
+- Optional: CRM or support tool integration (e.g. ticket creation for human review); keep behind adapter interfaces.
+
+Rules:
+- Each integration must be behind an adapter interface; keep credentials and provider-specific logic in one place.
+- Use environment or secret manager for API keys and webhook secrets; never hardcode.
+- Idempotency and idempotency keys for webhook consumers where applicable; handle rate limits and backoff.
+- Audit log for integration actions (webhook delivery, callbacks) for compliance and debugging.
+- Prefer webhooks over polling for real-time updates; document payload schemas in API_SPEC or separate integration docs.
+
+Do not:
+- Tightly couple core moderation or video logic to a single platform; support multiple consumers via configuration.
+- Expose internal IDs or sensitive data in webhook payloads without necessity; support filtering and scoping.
+- Change webhook or public API contract without versioning and notice.

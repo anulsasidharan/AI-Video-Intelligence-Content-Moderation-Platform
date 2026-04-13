@@ -1,0 +1,27 @@
+---
+description: Testing and code quality rules
+alwaysApply: true
+---
+
+Testing philosophy:
+- Write production-quality code with tests for critical behavior.
+- Prefer deterministic unit tests for business logic (moderation, policy evaluation, pipeline steps).
+- Add integration tests for APIs, repositories, pipelines, and workflows crossing boundaries.
+- Mock external services: OpenAI, Whisper, S3, Pinecone, PostgreSQL (or use test containers), webhooks.
+
+Testing expectations:
+- Add tests for non-trivial service methods (video_service, moderation_service, stream_service).
+- Add tests for auth and permission-sensitive flows (RBAC, API keys).
+- Add tests for AI/agent logic at the orchestration level where feasible (graphs, chains).
+- Cover validation, failure, and edge cases (no frames, low confidence, policy mismatch, escalation).
+- Mock frame extraction, Whisper, and vision APIs in tests; keep tests isolated.
+- Keep tests readable and isolated; do not depend on live external APIs in normal test flows.
+
+Code quality:
+- Use linting and formatting (ruff for Python, eslint for frontend); use types wherever the stack supports them.
+- Keep functions focused; refactor repeated logic into shared utilities when justified.
+
+Do not:
+- Add major logic without at least basic tests.
+- Create brittle tests tied to unstable implementation details.
+- Depend on live OpenAI, Whisper, S3, or Pinecone in normal test runs.

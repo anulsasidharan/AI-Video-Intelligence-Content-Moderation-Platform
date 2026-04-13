@@ -1,0 +1,23 @@
+---
+description: Moderation queue, review workflow, and policy-driven automation
+globs: backend/app/services/moderation*, backend/app/services/notification*, backend/app/workers/moderation*, backend/app/api/**/moderation*, backend/app/api/**/policies*
+---
+
+Moderation workflow features (see PRD):
+- Moderation queue: list of videos/streams pending or requiring human review; priority and filters.
+- Policy-driven automation: auto-flag, auto-reject, or escalate based on policy rules and AI output.
+- Human review: optional escalation to human review; configurable per policy; audit trail.
+- Alerts and notifications: real-time alerts for violations, SLA or backlog thresholds; notify via configured channels (email, webhook, in-app).
+
+Rules:
+- Moderation results and queue items must be first-class entities in the data model (docs/DB_SCHEMA.md); link videos/streams to moderation results and policies.
+- Policy evaluation and routing logic must live in services, not in routes.
+- Escalation and auto-action logic must be configurable (rules or thresholds); avoid hardcoded IDs.
+- Alert and notification logic should run in workers or event-driven paths; support idempotency and audit logging.
+- Auto-action (e.g. auto-reject) must respect business rules and policy config; log actions for audit.
+- Duplicate or batch handling: use video_id, stream_id, or job_id for idempotency; link to canonical record where applicable.
+
+Do not:
+- Put moderation decision or queue update logic only in HTTP handlers; support async pipeline (Celery, webhooks) for scale.
+- Assume single-tenant; scope queue and policies by tenant/organization where applicable.
+- Trigger automation without idempotency and audit trail where state changes are critical.

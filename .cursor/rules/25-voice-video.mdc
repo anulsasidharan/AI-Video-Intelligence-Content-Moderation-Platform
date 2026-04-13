@@ -1,0 +1,22 @@
+---
+description: Video analysis pipeline — live/recorded video, frame sampling, audio transcription (Whisper)
+globs: backend/app/ai/**, backend/app/services/video*, backend/app/services/stream*, backend/app/utils/video*, backend/app/utils/image*
+---
+
+Video analysis stack (VidShield AI):
+- **Recorded video:** FFmpeg/PyAV for decode; frame extraction at configurable intervals; thumbnails and artifacts to S3.
+- **Live stream:** Ingest frames or segments for real-time or near-real-time analysis; stream status and alerts via WebSocket.
+- **Audio:** OpenAI Whisper for transcription; store transcript and link to video for metadata and moderation context.
+- **Vision:** GPT-4o vision on sampled frames for content understanding, scene classification, and moderation.
+
+Rules:
+- Keep video processing pipeline separate from moderation decision logic; share video/stream context and artifacts where needed.
+- Transcriptions and frame metadata must be stored and linked to the video/stream record for audit and analytics.
+- Do not stream raw video bytes to LLM prompts; use frame extraction and optional base64 images per API constraints; use Whisper for audio-to-text, then text-based context for agents.
+- Prefer async or worker-based processing (Celery) for uploads, frame extraction, and transcription to avoid blocking request paths.
+- Secure storage and access control for video files, thumbnails, and transcripts; comply with retention and PII handling (e.g. GDPR).
+
+Do not:
+- Hardcode OpenAI or Whisper API keys; use config/env.
+- Store unencrypted video or PII in publicly accessible locations.
+- Mix video-specific business logic with generic API routes in the same untyped flow; use clear boundaries.

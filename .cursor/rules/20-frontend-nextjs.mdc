@@ -1,0 +1,51 @@
+---
+description: Next.js frontend rules (web — Admin + Dashboard; API consumers use backend directly)
+globs: frontend/**, src/**, app/**, components/**, lib/**, hooks/**
+---
+
+This rule applies to the **web** frontend only. API consumers use the FastAPI backend directly; see .cursor/rules/12-interfaces-admin-user-mobile.mdc.
+
+Frontend stack (per CLAUDE.md):
+- Next.js 14 (App Router), React 18, Tailwind CSS 3, shadcn/ui, Zustand, React Query, Socket.IO client
+
+Frontend rules:
+- Prefer TypeScript for all frontend logic; strict mode, no `any`; prefer `interface` for objects.
+- Keep components small, reusable, and focused.
+- Keep presentation separate from business/data-fetching logic.
+- Use hooks, services, or server actions appropriately based on project style.
+- Handle loading, error, and empty states explicitly.
+- Preserve design consistency and naming consistency.
+- Support real-time updates (WebSocket/Socket.IO) for live stream status and moderation alerts.
+- **Two UIs in one app:** **Admin** (e.g. `/admin/*`) and **Dashboard/User** (e.g. `/`, `/dashboard`, `/videos`, `/moderation`, `/live`, `/analytics`); use role-based routing and layout; shared design system and API client.
+
+Product-area alignment (see docs/PRD.md and CLAUDE.md):
+- **Admin (web):** Policy management, system monitoring, API keys, tenant/org settings.
+- **Dashboard (web):** Videos (list, detail, upload), moderation (queue, review, policies), live streams, analytics, settings.
+- **API consumers:** Not covered by this rule; they use REST/WebSocket API.
+
+Preferred frontend structure (per CLAUDE.md):
+- frontend/src/app/            (layout, page, (auth), dashboard, videos, moderation, live, api)
+- frontend/src/components/     (ui, layout, video, moderation, analytics, live)
+- frontend/src/hooks/
+- frontend/src/stores/
+- frontend/src/lib/
+- frontend/src/types/
+- frontend/tests/
+
+UI/UX rules:
+- Use accessible markup and semantic HTML.
+- Prefer reusable design system components (shadcn/ui).
+- Avoid oversized page components.
+- Avoid embedding complex API logic directly inside visual components unless already established.
+
+State/data rules:
+- Keep API clients centralized (lib/api.ts, socket).
+- Normalize repeated API access patterns.
+- Handle auth state carefully.
+- Validate critical inputs on both client and server.
+
+Do not:
+- Mix many responsibilities into one component.
+- Hardcode API URLs in components.
+- Duplicate UI patterns that should be shared.
+- Put admin-only flows in a separate mobile/partner app (admin is web only).
