@@ -74,20 +74,20 @@ class TestExtractFramesTask:
 
 
 class TestTranscribeAudioTask:
-    @patch("app.workers.video_tasks._gcs_client")
     @patch("app.workers.video_tasks.asyncio.run")
     @patch("app.workers.video_tasks.os.path.exists", return_value=True)
     @patch("app.workers.video_tasks.os.unlink")
     @patch("app.workers.video_tasks.tempfile.mkstemp", return_value=(0, "/tmp/fake.mp4"))
     @patch("app.workers.video_tasks.os.close")
+    @patch("app.workers.video_tasks._gcs_client")
     def test_happy_path(
         self,
+        mock_gcs_client,
         mock_close,
         mock_mkstemp,
         mock_unlink,
         mock_exists,
         mock_run,
-        mock_gcs_client,
     ):
         transcript_result = MagicMock()
         transcript_result.text = "Hello world."
@@ -96,8 +96,12 @@ class TestTranscribeAudioTask:
         transcript_result.error = None
         mock_run.return_value = transcript_result
 
-        # _gcs_client() returns a mock GCS client; chained calls all succeed by default
-        mock_gcs_client.return_value = MagicMock()
+        mock_gcs = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+        mock_gcs.bucket.return_value = mock_bucket
+        mock_bucket.blob.return_value = mock_blob
+        mock_gcs_client.return_value = mock_gcs
 
         from app.workers.video_tasks import transcribe_audio_task
 
@@ -107,17 +111,20 @@ class TestTranscribeAudioTask:
         assert result["language"] == "en"
         assert result["error"] is None
 
-    @patch("app.workers.video_tasks._gcs_client")
     @patch("app.workers.video_tasks.tempfile.mkstemp", return_value=(0, "/tmp/fake.mp4"))
     @patch("app.workers.video_tasks.os.close")
     @patch("app.workers.video_tasks.os.path.exists", return_value=False)
+    @patch("app.workers.video_tasks._gcs_client")
     def test_gcs_failure_triggers_retry(
-        self, mock_exists, mock_close, mock_mkstemp, mock_gcs_client
+        self, mock_gcs_client, mock_exists, mock_close, mock_mkstemp
     ):
-        # Simulate GCS download failure by raising on download_to_filename
-        mock_gcs_client.return_value.bucket.return_value.blob.return_value.download_to_filename.side_effect = Exception(
-            "GCS connection refused"
-        )
+        mock_gcs = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+        mock_gcs.bucket.return_value = mock_bucket
+        mock_bucket.blob.return_value = mock_blob
+        mock_blob.download_to_filename.side_effect = Exception("GCS connection refused")
+        mock_gcs_client.return_value = mock_gcs
 
         from app.workers.video_tasks import transcribe_audio_task
 
@@ -130,7 +137,6 @@ class TestTranscribeAudioTask:
 
 class TestGenerateThumbnailTask:
     @patch("app.workers.video_tasks.sync_session")
-    @patch("app.workers.video_tasks._gcs_client")
     @patch("app.workers.video_tasks.subprocess.run")
     @patch(
         "app.workers.video_tasks.tempfile.mkstemp",
@@ -139,19 +145,25 @@ class TestGenerateThumbnailTask:
     @patch("app.workers.video_tasks.os.close")
     @patch("app.workers.video_tasks.os.path.exists", return_value=True)
     @patch("app.workers.video_tasks.os.unlink")
+    @patch("app.workers.video_tasks._gcs_client")
     def test_happy_path_returns_thumb_key(
         self,
+        mock_gcs_client,
         mock_unlink,
         mock_exists,
         mock_close,
         mock_mkstemp,
         mock_subprocess,
-        mock_gcs_client,
         mock_sync_session,
     ):
         mock_subprocess.return_value = MagicMock(returncode=0)
-        # GCS client mock: bucket().blob().download_to_filename and upload_from_filename succeed
-        mock_gcs_client.return_value = MagicMock()
+
+        mock_gcs = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+        mock_gcs.bucket.return_value = mock_bucket
+        mock_bucket.blob.return_value = mock_blob
+        mock_gcs_client.return_value = mock_gcs
 
         mock_db = MagicMock()
         mock_db.__enter__ = lambda s: mock_db
@@ -165,7 +177,6 @@ class TestGenerateThumbnailTask:
 
         assert result == f"thumbnails/{_VIDEO_ID}.jpg"
 
-    @patch("app.workers.video_tasks._gcs_client")
     @patch("app.workers.video_tasks.subprocess.run")
     @patch(
         "app.workers.video_tasks.tempfile.mkstemp",
@@ -174,17 +185,24 @@ class TestGenerateThumbnailTask:
     @patch("app.workers.video_tasks.os.close")
     @patch("app.workers.video_tasks.os.path.exists", return_value=True)
     @patch("app.workers.video_tasks.os.unlink")
+    @patch("app.workers.video_tasks._gcs_client")
     def test_ffmpeg_failure_returns_none(
         self,
+        mock_gcs_client,
         mock_unlink,
         mock_exists,
         mock_close,
         mock_mkstemp,
         mock_subprocess,
-        mock_gcs_client,
     ):
         mock_subprocess.return_value = MagicMock(returncode=1, stderr=b"error")
-        mock_gcs_client.return_value = MagicMock()
+
+        mock_gcs = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+        mock_gcs.bucket.return_value = mock_bucket
+        mock_bucket.blob.return_value = mock_blob
+        mock_gcs_client.return_value = mock_gcs
 
         from app.workers.video_tasks import generate_thumbnail_task
 
