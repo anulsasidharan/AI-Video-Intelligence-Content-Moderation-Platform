@@ -21,7 +21,7 @@ def _make_stream(stream_id=None, status=StreamStatus.ACTIVE):
     s.id = stream_id or _STREAM_ID
     s.title = "Test Stream"
     s.status = status
-    s.ingest_url = f"rtmp://us-east-1.ingest.vidshield.ai/live/{_STREAM_ID}"
+    s.ingest_url = f"rtmp://ingest.vidshield.ai/live/{_STREAM_ID}"
     s.owner_id = _OWNER_ID
     s.tenant_id = None
     s.stopped_at = None

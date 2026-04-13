@@ -1,4 +1,10 @@
-"""Tests for W-02 — video_tasks (all external I/O mocked)."""
+"""Tests for W-02 — video_tasks (all external I/O mocked).
+
+All GCS calls are intercepted via @patch("app.workers.video_tasks._gcs_client")
+so that no real Google Cloud credentials are required during testing.
+The GCS client is a factory function (_gcs_client()) that returns a
+google.cloud.storage.Client; mocking the factory is the correct intercept point.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +16,7 @@ import pytest
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 _VIDEO_ID = str(uuid.uuid4())
-_S3_KEY = "videos/test.mp4"
+_GCS_KEY = "videos/test.mp4"
 
 
 # Minimal ModerationReport-like object returned by run_video_analysis mock
@@ -46,7 +52,7 @@ class TestExtractFramesTask:
 
         from app.workers.video_tasks import extract_frames_task
 
-        result = extract_frames_task(_VIDEO_ID, _S3_KEY)
+        result = extract_frames_task(_VIDEO_ID, _GCS_KEY)
 
         assert result["frames"] == ["b64frame1", "b64frame2"]
         assert result["fps"] == 25.0
@@ -61,14 +67,14 @@ class TestExtractFramesTask:
         mock_extract.side_effect = FrameExtractionError("cannot open video")
 
         with pytest.raises(Exception):  # noqa: B017 — retry wraps varied error types
-            extract_frames_task.apply(args=[_VIDEO_ID, _S3_KEY]).get(propagate=True)
+            extract_frames_task.apply(args=[_VIDEO_ID, _GCS_KEY]).get(propagate=True)
 
 
 # ── transcribe_audio_task ──────────────────────────────────────────────────────
 
 
 class TestTranscribeAudioTask:
-    @patch("app.workers.video_tasks._s3_client")
+    @patch("app.workers.video_tasks._gcs_client")
     @patch("app.workers.video_tasks.asyncio.run")
     @patch("app.workers.video_tasks.os.path.exists", return_value=True)
     @patch("app.workers.video_tasks.os.unlink")
@@ -81,7 +87,7 @@ class TestTranscribeAudioTask:
         mock_unlink,
         mock_exists,
         mock_run,
-        mock_s3_client,
+        mock_gcs_client,
     ):
         transcript_result = MagicMock()
         transcript_result.text = "Hello world."
@@ -90,30 +96,33 @@ class TestTranscribeAudioTask:
         transcript_result.error = None
         mock_run.return_value = transcript_result
 
-        mock_s3 = MagicMock()
-        mock_s3_client.return_value = mock_s3
+        # _gcs_client() returns a mock GCS client; chained calls all succeed by default
+        mock_gcs_client.return_value = MagicMock()
 
         from app.workers.video_tasks import transcribe_audio_task
 
-        result = transcribe_audio_task(_VIDEO_ID, _S3_KEY)
+        result = transcribe_audio_task(_VIDEO_ID, _GCS_KEY)
 
         assert result["text"] == "Hello world."
         assert result["language"] == "en"
         assert result["error"] is None
 
-    @patch("app.workers.video_tasks._s3_client")
+    @patch("app.workers.video_tasks._gcs_client")
     @patch("app.workers.video_tasks.tempfile.mkstemp", return_value=(0, "/tmp/fake.mp4"))
     @patch("app.workers.video_tasks.os.close")
     @patch("app.workers.video_tasks.os.path.exists", return_value=False)
-    def test_s3_failure_triggers_retry(self, mock_exists, mock_close, mock_mkstemp, mock_s3_client):
-        mock_s3 = MagicMock()
-        mock_s3.download_file.side_effect = Exception("S3 connection refused")
-        mock_s3_client.return_value = mock_s3
+    def test_gcs_failure_triggers_retry(
+        self, mock_exists, mock_close, mock_mkstemp, mock_gcs_client
+    ):
+        # Simulate GCS download failure by raising on download_to_filename
+        mock_gcs_client.return_value.bucket.return_value.blob.return_value.download_to_filename.side_effect = Exception(
+            "GCS connection refused"
+        )
 
         from app.workers.video_tasks import transcribe_audio_task
 
         with pytest.raises(Exception):  # noqa: B017 — retry wraps varied error types
-            transcribe_audio_task.apply(args=[_VIDEO_ID, _S3_KEY]).get(propagate=True)
+            transcribe_audio_task.apply(args=[_VIDEO_ID, _GCS_KEY]).get(propagate=True)
 
 
 # ── generate_thumbnail_task ────────────────────────────────────────────────────
@@ -121,7 +130,7 @@ class TestTranscribeAudioTask:
 
 class TestGenerateThumbnailTask:
     @patch("app.workers.video_tasks.sync_session")
-    @patch("app.workers.video_tasks._s3_client")
+    @patch("app.workers.video_tasks._gcs_client")
     @patch("app.workers.video_tasks.subprocess.run")
     @patch(
         "app.workers.video_tasks.tempfile.mkstemp",
@@ -137,12 +146,12 @@ class TestGenerateThumbnailTask:
         mock_close,
         mock_mkstemp,
         mock_subprocess,
-        mock_s3_client,
+        mock_gcs_client,
         mock_sync_session,
     ):
         mock_subprocess.return_value = MagicMock(returncode=0)
-        mock_s3 = MagicMock()
-        mock_s3_client.return_value = mock_s3
+        # GCS client mock: bucket().blob().download_to_filename and upload_from_filename succeed
+        mock_gcs_client.return_value = MagicMock()
 
         mock_db = MagicMock()
         mock_db.__enter__ = lambda s: mock_db
@@ -152,11 +161,11 @@ class TestGenerateThumbnailTask:
 
         from app.workers.video_tasks import generate_thumbnail_task
 
-        result = generate_thumbnail_task(_VIDEO_ID, _S3_KEY)
+        result = generate_thumbnail_task(_VIDEO_ID, _GCS_KEY)
 
         assert result == f"thumbnails/{_VIDEO_ID}.jpg"
 
-    @patch("app.workers.video_tasks._s3_client")
+    @patch("app.workers.video_tasks._gcs_client")
     @patch("app.workers.video_tasks.subprocess.run")
     @patch(
         "app.workers.video_tasks.tempfile.mkstemp",
@@ -172,15 +181,14 @@ class TestGenerateThumbnailTask:
         mock_close,
         mock_mkstemp,
         mock_subprocess,
-        mock_s3_client,
+        mock_gcs_client,
     ):
         mock_subprocess.return_value = MagicMock(returncode=1, stderr=b"error")
-        mock_s3 = MagicMock()
-        mock_s3_client.return_value = mock_s3
+        mock_gcs_client.return_value = MagicMock()
 
         from app.workers.video_tasks import generate_thumbnail_task
 
-        result = generate_thumbnail_task(_VIDEO_ID, _S3_KEY)
+        result = generate_thumbnail_task(_VIDEO_ID, _GCS_KEY)
 
         assert result is None
 
@@ -208,7 +216,7 @@ class TestRunAnalysisPipelineTask:
 
         from app.workers.video_tasks import run_analysis_pipeline_task
 
-        result = run_analysis_pipeline_task(_VIDEO_ID, _S3_KEY)
+        result = run_analysis_pipeline_task(_VIDEO_ID, _GCS_KEY)
 
         assert result["decision"] == "approved"
         assert result["confidence"] == 0.92
@@ -234,7 +242,7 @@ class TestRunAnalysisPipelineTask:
 
         from app.workers.video_tasks import run_analysis_pipeline_task
 
-        run_analysis_pipeline_task(_VIDEO_ID, _S3_KEY)
+        run_analysis_pipeline_task(_VIDEO_ID, _GCS_KEY)
 
         assert mock_db.add.call_count == 1  # Only AnalyticsEvent (existing result updated in-place)
         assert existing.status is not None
@@ -247,7 +255,7 @@ class TestRunAnalysisPipelineTask:
         from app.workers.video_tasks import run_analysis_pipeline_task
 
         with pytest.raises(Exception):  # noqa: B017 — retry wraps varied error types
-            run_analysis_pipeline_task.apply(args=[_VIDEO_ID, _S3_KEY]).get(propagate=True)
+            run_analysis_pipeline_task.apply(args=[_VIDEO_ID, _GCS_KEY]).get(propagate=True)
 
         mock_set_status.assert_called()
 
@@ -286,7 +294,7 @@ class TestProcessVideo:
 
         from app.workers.video_tasks import process_video
 
-        result = process_video(_VIDEO_ID, _S3_KEY)
+        result = process_video(_VIDEO_ID, _GCS_KEY)
 
         assert result["decision"] == "approved"
         mock_set_status.assert_called()
@@ -319,12 +327,12 @@ class TestProcessVideo:
             "language": "en",
             "error": None,
         }
-        mock_thumbnail.side_effect = Exception("S3 upload failed")
+        mock_thumbnail.side_effect = Exception("GCS upload failed")
         mock_pipeline.return_value = {"decision": "approved", "confidence": 0.8}
 
         from app.workers.video_tasks import process_video
 
-        result = process_video(_VIDEO_ID, _S3_KEY)
+        result = process_video(_VIDEO_ID, _GCS_KEY)
 
         # Pipeline still completes despite thumbnail failure
         assert result["decision"] == "approved"
