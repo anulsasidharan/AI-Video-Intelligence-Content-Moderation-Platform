@@ -194,7 +194,9 @@ class StorageService:
         blob.download_to_filename(destination_path)
         logger.info("gcs_object_downloaded_to_file", object_key=object_key, path=destination_path)
 
-    def upload_file(self, source_path: str, object_key: str, content_type: str = "application/octet-stream") -> None:
+    def upload_file(
+        self, source_path: str, object_key: str, content_type: str = "application/octet-stream"
+    ) -> None:
         """
         Upload a local file to GCS by path.
 
