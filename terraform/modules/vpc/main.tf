@@ -1,277 +1,139 @@
 locals {
-  name_prefix = "${var.project}-${var.environment}"
-  common_tags = merge(
-    {
-      Project     = var.project
-      Environment = var.environment
-      ManagedBy   = "terraform"
-    },
-    var.tags,
-  )
-
-  # Determine how many NAT gateways to create
-  nat_count = var.single_nat_gateway ? 1 : length(var.availability_zones)
+  name_prefix = "${var.project_id}-${var.environment}"
 }
 
-# ── VPC ────────────────────────────────────────────────────────────────────────
+# ── VPC Network ────────────────────────────────────────────────────────────────
 
-resource "aws_vpc" "this" {
-  cidr_block           = var.vpc_cidr
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-vpc" })
+resource "google_compute_network" "vpc" {
+  name                    = "${local.name_prefix}-vpc"
+  auto_create_subnetworks = false
+  routing_mode            = "REGIONAL"
+  project                 = var.project_id
 }
 
-# ── Internet Gateway ───────────────────────────────────────────────────────────
+# ── Subnet (GKE nodes + secondary ranges for pods/services) ───────────────────
 
-resource "aws_internet_gateway" "this" {
-  vpc_id = aws_vpc.this.id
-  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-igw" })
-}
+resource "google_compute_subnetwork" "private" {
+  name          = "${local.name_prefix}-subnet"
+  region        = var.region
+  network       = google_compute_network.vpc.id
+  ip_cidr_range = var.subnet_cidr
+  project       = var.project_id
 
-# ── Public Subnets ─────────────────────────────────────────────────────────────
-
-resource "aws_subnet" "public" {
-  count = length(var.public_subnet_cidrs)
-
-  vpc_id                  = aws_vpc.this.id
-  cidr_block              = var.public_subnet_cidrs[count.index]
-  availability_zone       = var.availability_zones[count.index]
-  map_public_ip_on_launch = true
-
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-public-${var.availability_zones[count.index]}"
-    Tier = "public"
-  })
-}
-
-# ── Private Subnets ────────────────────────────────────────────────────────────
-
-resource "aws_subnet" "private" {
-  count = length(var.private_subnet_cidrs)
-
-  vpc_id            = aws_vpc.this.id
-  cidr_block        = var.private_subnet_cidrs[count.index]
-  availability_zone = var.availability_zones[count.index]
-
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-private-${var.availability_zones[count.index]}"
-    Tier = "private"
-  })
-}
-
-# ── Elastic IPs for NAT Gateways ───────────────────────────────────────────────
-
-resource "aws_eip" "nat" {
-  count  = local.nat_count
-  domain = "vpc"
-
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-nat-eip-${count.index}"
-  })
-
-  depends_on = [aws_internet_gateway.this]
-}
-
-# ── NAT Gateways ───────────────────────────────────────────────────────────────
-
-resource "aws_nat_gateway" "this" {
-  count = local.nat_count
-
-  allocation_id = aws_eip.nat[count.index].id
-  subnet_id     = aws_subnet.public[count.index].id
-
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-nat-${count.index}"
-  })
-
-  depends_on = [aws_internet_gateway.this]
-}
-
-# ── Route Tables ───────────────────────────────────────────────────────────────
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.this.id
-  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-rt-public" })
-}
-
-resource "aws_route" "public_internet" {
-  route_table_id         = aws_route_table.public.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.this.id
-}
-
-resource "aws_route_table_association" "public" {
-  count          = length(aws_subnet.public)
-  subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
-}
-
-resource "aws_route_table" "private" {
-  count  = local.nat_count
-  vpc_id = aws_vpc.this.id
-
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-rt-private-${count.index}"
-  })
-}
-
-resource "aws_route" "private_nat" {
-  count = local.nat_count
-
-  route_table_id         = aws_route_table.private[count.index].id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.this[count.index].id
-}
-
-resource "aws_route_table_association" "private" {
-  count = length(aws_subnet.private)
-
-  subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private[var.single_nat_gateway ? 0 : count.index].id
-}
-
-# ── Security Groups ────────────────────────────────────────────────────────────
-
-resource "aws_security_group" "alb" {
-  name        = "${local.name_prefix}-sg-alb"
-  description = "ALB: allow inbound HTTPS/HTTP from anywhere; outbound to ECS."
-  vpc_id      = aws_vpc.this.id
-
-  ingress {
-    description = "HTTPS from internet"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  # Required for GKE pods and services to use secondary IP ranges
+  secondary_ip_range {
+    range_name    = "pods"
+    ip_cidr_range = var.pods_cidr
   }
 
-  ingress {
-    description = "HTTP from internet (redirect to HTTPS)"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  secondary_ip_range {
+    range_name    = "services"
+    ip_cidr_range = var.services_cidr
   }
 
-  egress {
-    description = "All outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-sg-alb" })
+  # Allows VMs in this subnet to reach Google APIs without external IPs
+  private_ip_google_access = true
 }
 
-resource "aws_security_group" "ecs_api" {
-  name        = "${local.name_prefix}-sg-ecs-api"
-  description = "ECS API tasks: allow inbound from ALB only; outbound unrestricted."
-  vpc_id      = aws_vpc.this.id
+# ── Cloud Router + NAT (private GKE nodes need this to reach internet) ─────────
 
-  ingress {
-    description     = "From ALB"
-    from_port       = 8000
-    to_port         = 8000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-  }
-
-  egress {
-    description = "All outbound (OpenAI, S3, Pinecone, etc.)"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-sg-ecs-api" })
+resource "google_compute_router" "router" {
+  name    = "${local.name_prefix}-router"
+  region  = var.region
+  network = google_compute_network.vpc.id
+  project = var.project_id
 }
 
-resource "aws_security_group" "ecs_frontend" {
-  name        = "${local.name_prefix}-sg-ecs-frontend"
-  description = "ECS Frontend tasks: allow inbound port 3000 from ALB only; outbound unrestricted."
-  vpc_id      = aws_vpc.this.id
+resource "google_compute_router_nat" "nat" {
+  name                               = "${local.name_prefix}-nat"
+  router                             = google_compute_router.router.name
+  region                             = var.region
+  project                            = var.project_id
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 
-  ingress {
-    description     = "From ALB"
-    from_port       = 3000
-    to_port         = 3000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
   }
-
-  egress {
-    description = "All outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-sg-ecs-frontend" })
 }
 
-resource "aws_security_group" "ecs_worker" {
-  name        = "${local.name_prefix}-sg-ecs-worker"
-  description = "Celery workers: no inbound; unrestricted outbound."
-  vpc_id      = aws_vpc.this.id
+# ── Private Services Access ───────────────────────────────────────────────────
+# Required by Cloud SQL (private IP) and Cloud Memorystore (PRIVATE_SERVICE_ACCESS).
 
-  egress {
-    description = "All outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-sg-ecs-worker" })
+resource "google_compute_global_address" "private_services_range" {
+  name          = "${local.name_prefix}-private-svc-range"
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.vpc.id
+  address       = split("/", var.private_services_cidr)[0]
+  project       = var.project_id
 }
 
-resource "aws_security_group" "rds" {
-  name        = "${local.name_prefix}-sg-rds"
-  description = "RDS: allow inbound PostgreSQL from ECS tasks only."
-  vpc_id      = aws_vpc.this.id
-
-  ingress {
-    description     = "PostgreSQL from ECS API"
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_api.id, aws_security_group.ecs_worker.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-sg-rds" })
+resource "google_service_networking_connection" "private_vpc_connection" {
+  network                 = google_compute_network.vpc.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.private_services_range.name]
 }
 
-resource "aws_security_group" "redis" {
-  name        = "${local.name_prefix}-sg-redis"
-  description = "ElastiCache Redis: allow inbound from ECS tasks only."
-  vpc_id      = aws_vpc.this.id
+# ── Firewall Rules ────────────────────────────────────────────────────────────
 
-  ingress {
-    description     = "Redis from ECS API and workers"
-    from_port       = 6379
-    to_port         = 6379
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_api.id, aws_security_group.ecs_worker.id]
+# Allow internal communication within the VPC (all protocols)
+resource "google_compute_firewall" "allow_internal" {
+  name    = "${local.name_prefix}-allow-internal"
+  network = google_compute_network.vpc.name
+  project = var.project_id
+
+  allow {
+    protocol = "tcp"
+    ports    = ["0-65535"]
   }
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+  allow {
+    protocol = "udp"
+    ports    = ["0-65535"]
   }
 
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-sg-redis" })
+  allow {
+    protocol = "icmp"
+  }
+
+  source_ranges = [var.subnet_cidr, var.pods_cidr, var.services_cidr]
+  direction     = "INGRESS"
+  priority      = 1000
+}
+
+# Allow GKE master to reach nodes (required for webhooks and API server → kubelet)
+resource "google_compute_firewall" "allow_master_to_nodes" {
+  name    = "${local.name_prefix}-allow-master-nodes"
+  network = google_compute_network.vpc.name
+  project = var.project_id
+
+  allow {
+    protocol = "tcp"
+    ports    = ["443", "8443", "10250"]
+  }
+
+  source_ranges = [var.master_ipv4_cidr]
+  target_tags   = ["gke-node"]
+  direction     = "INGRESS"
+  priority      = 1000
+}
+
+# Allow health checks from Google's load balancer probe ranges
+resource "google_compute_firewall" "allow_health_checks" {
+  name    = "${local.name_prefix}-allow-health-checks"
+  network = google_compute_network.vpc.name
+  project = var.project_id
+
+  allow {
+    protocol = "tcp"
+  }
+
+  # GCP load balancer health check ranges
+  source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
+  target_tags   = ["gke-node"]
+  direction     = "INGRESS"
+  priority      = 1000
 }

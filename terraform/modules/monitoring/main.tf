@@ -1,353 +1,548 @@
 locals {
   name_prefix = "${var.project}-${var.environment}"
-  common_tags = merge(
-    {
-      Project     = var.project
-      Environment = var.environment
-      ManagedBy   = "terraform"
-    },
-    var.tags,
-  )
 }
 
-# ── SNS Topic for Alarms ───────────────────────────────────────────────────────
+# ── Notification Channel ───────────────────────────────────────────────────────
 
-resource "aws_sns_topic" "alerts" {
-  name = "${local.name_prefix}-alerts"
-  tags = local.common_tags
-}
+resource "google_monitoring_notification_channel" "email" {
+  count = var.alert_email != "" ? 1 : 0
 
-# ── CloudWatch Log Groups ──────────────────────────────────────────────────────
+  project      = var.project_id
+  display_name = "VidShield Ops — ${var.environment}"
+  type         = "email"
 
-resource "aws_cloudwatch_log_group" "application" {
-  name              = "/${local.name_prefix}/application"
-  retention_in_days = var.log_retention_days
-  tags              = local.common_tags
-}
-
-# ── CloudWatch Alarms — API ────────────────────────────────────────────────────
-
-resource "aws_cloudwatch_metric_alarm" "api_5xx" {
-  alarm_name          = "${local.name_prefix}-api-5xx-errors"
-  alarm_description   = "API HTTP 5xx error count exceeds threshold"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "HTTPCode_Target_5XX_Count"
-  namespace           = "AWS/ApplicationELB"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = var.api_5xx_threshold
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    LoadBalancer = var.alb_arn_suffix
+  labels = {
+    email_address = var.alert_email
   }
 
-  alarm_actions = concat(var.alarm_actions, [aws_sns_topic.alerts.arn])
-  ok_actions    = concat(var.ok_actions, [aws_sns_topic.alerts.arn])
-
-  tags = local.common_tags
+  force_delete = true
 }
 
-resource "aws_cloudwatch_metric_alarm" "api_p99_latency" {
-  alarm_name          = "${local.name_prefix}-api-p99-latency"
-  alarm_description   = "API p99 target response time is above 2 seconds"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  metric_name         = "TargetResponseTime"
-  namespace           = "AWS/ApplicationELB"
-  period              = 60
-  extended_statistic  = "p99"
-  threshold           = 2.0
-  treat_missing_data  = "notBreaching"
+locals {
+  notification_channels = var.alert_email != "" ? [
+    google_monitoring_notification_channel.email[0].id
+  ] : []
+}
 
-  dimensions = {
-    LoadBalancer = var.alb_arn_suffix
+# ── Log-Based Metrics ──────────────────────────────────────────────────────────
+# Equivalent to CloudWatch Log Metric Filters
+
+resource "google_logging_metric" "api_5xx_errors" {
+  name    = "${local.name_prefix}-api-5xx-errors"
+  project = var.project_id
+  filter  = <<-EOT
+    resource.type="k8s_container"
+    resource.labels.container_name="api"
+    jsonPayload.status>=500
+  EOT
+
+  metric_descriptor {
+    metric_kind  = "DELTA"
+    value_type   = "INT64"
+    unit         = "1"
+    display_name = "API 5xx Errors"
+  }
+}
+
+resource "google_logging_metric" "celery_task_failures" {
+  name    = "${local.name_prefix}-celery-failures"
+  project = var.project_id
+  filter  = <<-EOT
+    resource.type="k8s_container"
+    resource.labels.container_name="worker"
+    jsonPayload.status="FAILURE"
+  EOT
+
+  metric_descriptor {
+    metric_kind  = "DELTA"
+    value_type   = "INT64"
+    unit         = "1"
+    display_name = "Celery Task Failures"
+  }
+}
+
+# ── Alert Policies ─────────────────────────────────────────────────────────────
+
+# GKE: API container CPU > 80%
+resource "google_monitoring_alert_policy" "gke_api_cpu" {
+  project      = var.project_id
+  display_name = "[${var.environment}] GKE API Container CPU > 80%"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "API container CPU utilization"
+
+    condition_threshold {
+      filter          = "resource.type=\"k8s_container\" AND resource.labels.cluster_name=\"${var.gke_cluster_name}\" AND resource.labels.container_name=\"api\" AND metric.type=\"kubernetes.io/container/cpu/request_utilization\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0.8
+      duration        = "300s"
+
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+    }
   }
 
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
-
-  tags = local.common_tags
-}
-
-# ── CloudWatch Alarms — ECS API Service ───────────────────────────────────────
-
-resource "aws_cloudwatch_metric_alarm" "ecs_api_cpu" {
-  alarm_name          = "${local.name_prefix}-ecs-api-cpu"
-  alarm_description   = "ECS API service CPU utilization is high"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/ECS"
-  period              = 300
-  statistic           = "Average"
-  threshold           = var.cpu_utilization_threshold
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    ClusterName = var.ecs_cluster_name
-    ServiceName = var.api_service_name
+  notification_channels = local.notification_channels
+  alert_strategy {
+    auto_close = "604800s" # auto-close after 7 days if not resolved
   }
 
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
-
-  tags = local.common_tags
+  documentation {
+    content   = "The GKE API container CPU utilization has exceeded 80% for more than 5 minutes in the ${var.environment} environment. Check HPA and consider scaling up."
+    mime_type = "text/markdown"
+  }
 }
 
-resource "aws_cloudwatch_metric_alarm" "ecs_api_memory" {
-  alarm_name          = "${local.name_prefix}-ecs-api-memory"
-  alarm_description   = "ECS API service memory utilization is high"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "MemoryUtilization"
-  namespace           = "AWS/ECS"
-  period              = 300
-  statistic           = "Average"
-  threshold           = var.memory_utilization_threshold
-  treat_missing_data  = "notBreaching"
+# GKE: Worker container CPU > 85%
+resource "google_monitoring_alert_policy" "gke_worker_cpu" {
+  project      = var.project_id
+  display_name = "[${var.environment}] GKE Worker Container CPU > 85%"
+  combiner     = "OR"
 
-  dimensions = {
-    ClusterName = var.ecs_cluster_name
-    ServiceName = var.api_service_name
+  conditions {
+    display_name = "Celery worker CPU utilization"
+
+    condition_threshold {
+      filter          = "resource.type=\"k8s_container\" AND resource.labels.cluster_name=\"${var.gke_cluster_name}\" AND resource.labels.container_name=\"worker\" AND metric.type=\"kubernetes.io/container/cpu/request_utilization\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0.85
+      duration        = "300s"
+
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+    }
   }
 
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
-
-  tags = local.common_tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "ecs_worker_cpu" {
-  alarm_name          = "${local.name_prefix}-ecs-worker-cpu"
-  alarm_description   = "Celery worker CPU utilization is high"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/ECS"
-  period              = 300
-  statistic           = "Average"
-  threshold           = var.cpu_utilization_threshold
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    ClusterName = var.ecs_cluster_name
-    ServiceName = var.worker_service_name
+  notification_channels = local.notification_channels
+  alert_strategy {
+    auto_close = "604800s"
   }
 
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
-
-  tags = local.common_tags
+  documentation {
+    content   = "Celery worker CPU is above 85%. AI video analysis pipeline may be backlogged. Consider scaling up the worker deployment."
+    mime_type = "text/markdown"
+  }
 }
 
-# ── CloudWatch Alarms — RDS ────────────────────────────────────────────────────
+# GKE: Pod restart loop (CrashLoopBackOff)
+resource "google_monitoring_alert_policy" "pod_restarts" {
+  project      = var.project_id
+  display_name = "[${var.environment}] GKE Pod Restart Rate High"
+  combiner     = "OR"
 
-resource "aws_cloudwatch_metric_alarm" "rds_connections" {
-  alarm_name          = "${local.name_prefix}-rds-connections"
-  alarm_description   = "RDS database connection count is high"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "DatabaseConnections"
-  namespace           = "AWS/RDS"
-  period              = 300
-  statistic           = "Average"
-  threshold           = var.db_connection_threshold
-  treat_missing_data  = "notBreaching"
+  conditions {
+    display_name = "Pod restart count"
 
-  dimensions = {
-    DBInstanceIdentifier = var.rds_instance_id
+    condition_threshold {
+      filter          = "resource.type=\"k8s_container\" AND resource.labels.cluster_name=\"${var.gke_cluster_name}\" AND metric.type=\"kubernetes.io/container/restart_count\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 5
+      duration        = "600s"
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_RATE"
+        cross_series_reducer = "REDUCE_SUM"
+        group_by_fields      = ["resource.labels.pod_name"]
+      }
+    }
   }
 
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
-
-  tags = local.common_tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
-  alarm_name          = "${local.name_prefix}-rds-cpu"
-  alarm_description   = "RDS CPU utilization is high"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/RDS"
-  period              = 300
-  statistic           = "Average"
-  threshold           = 80
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    DBInstanceIdentifier = var.rds_instance_id
+  notification_channels = local.notification_channels
+  alert_strategy {
+    auto_close = "86400s"
   }
 
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
-
-  tags = local.common_tags
+  documentation {
+    content   = "A pod in the ${var.environment} cluster is restarting frequently. Likely a CrashLoopBackOff. Run: kubectl get pods -n vidshield"
+    mime_type = "text/markdown"
+  }
 }
 
-resource "aws_cloudwatch_metric_alarm" "rds_freeable_memory" {
-  alarm_name          = "${local.name_prefix}-rds-low-memory"
-  alarm_description   = "RDS freeable memory is below 256 MiB"
-  comparison_operator = "LessThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "FreeableMemory"
-  namespace           = "AWS/RDS"
-  period              = 300
-  statistic           = "Average"
-  threshold           = 268435456 # 256 MiB in bytes
-  treat_missing_data  = "notBreaching"
+# Cloud SQL: CPU > 80%
+resource "google_monitoring_alert_policy" "cloud_sql_cpu" {
+  project      = var.project_id
+  display_name = "[${var.environment}] Cloud SQL CPU > 80%"
+  combiner     = "OR"
 
-  dimensions = {
-    DBInstanceIdentifier = var.rds_instance_id
+  conditions {
+    display_name = "Cloud SQL CPU utilization"
+
+    condition_threshold {
+      filter          = "resource.type=\"cloudsql_database\" AND resource.labels.database_id=\"${var.project_id}:${var.cloud_sql_instance}\" AND metric.type=\"cloudsql.googleapis.com/database/cpu/utilization\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0.8
+      duration        = "300s"
+
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+    }
   }
 
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
-
-  tags = local.common_tags
-}
-
-# ── CloudWatch Alarms — ElastiCache ───────────────────────────────────────────
-
-resource "aws_cloudwatch_metric_alarm" "redis_cpu" {
-  alarm_name          = "${local.name_prefix}-redis-cpu"
-  alarm_description   = "Redis engine CPU utilization is high"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "EngineCPUUtilization"
-  namespace           = "AWS/ElastiCache"
-  period              = 300
-  statistic           = "Average"
-  threshold           = 80
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    ReplicationGroupId = var.redis_replication_group_id
+  notification_channels = local.notification_channels
+  alert_strategy {
+    auto_close = "604800s"
   }
 
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
-
-  tags = local.common_tags
+  documentation {
+    content   = "Cloud SQL CPU is above 80%. Consider upgrading the instance tier or optimising slow queries. Check query insights in the GCP Console."
+    mime_type = "text/markdown"
+  }
 }
 
-resource "aws_cloudwatch_metric_alarm" "redis_memory" {
-  alarm_name          = "${local.name_prefix}-redis-memory"
-  alarm_description   = "Redis memory usage is above 80%"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "DatabaseMemoryUsagePercentage"
-  namespace           = "AWS/ElastiCache"
-  period              = 300
-  statistic           = "Average"
-  threshold           = 80
-  treat_missing_data  = "notBreaching"
+# Cloud SQL: active connections > 150
+resource "google_monitoring_alert_policy" "cloud_sql_connections" {
+  project      = var.project_id
+  display_name = "[${var.environment}] Cloud SQL Connections > 150"
+  combiner     = "OR"
 
-  dimensions = {
-    ReplicationGroupId = var.redis_replication_group_id
+  conditions {
+    display_name = "Cloud SQL active connections"
+
+    condition_threshold {
+      filter          = "resource.type=\"cloudsql_database\" AND resource.labels.database_id=\"${var.project_id}:${var.cloud_sql_instance}\" AND metric.type=\"cloudsql.googleapis.com/database/postgresql/num_backends\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 150
+      duration        = "60s"
+
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+    }
   }
 
-  alarm_actions = var.alarm_actions
-  ok_actions    = var.ok_actions
+  notification_channels = local.notification_channels
+  alert_strategy {
+    auto_close = "604800s"
+  }
 
-  tags = local.common_tags
+  documentation {
+    content   = "Cloud SQL active connections exceeded 150. Check for connection pool leaks (PgBouncer may be needed). Current max_connections is 200."
+    mime_type = "text/markdown"
+  }
 }
 
-# ── CloudWatch Dashboard ───────────────────────────────────────────────────────
+# Cloud SQL: disk utilization > 80%
+resource "google_monitoring_alert_policy" "cloud_sql_disk" {
+  project      = var.project_id
+  display_name = "[${var.environment}] Cloud SQL Disk > 80%"
+  combiner     = "OR"
 
-resource "aws_cloudwatch_dashboard" "main" {
-  dashboard_name = "${local.name_prefix}-dashboard"
+  conditions {
+    display_name = "Cloud SQL disk utilization"
 
-  dashboard_body = jsonencode({
-    widgets = [
-      {
-        type   = "metric"
-        x      = 0
-        y      = 0
-        width  = 12
-        height = 6
-        properties = {
-          title  = "API — Request Count & 5xx Errors"
-          region = var.aws_region
-          metrics = [
-            ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", var.alb_arn_suffix],
-            ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", var.alb_arn_suffix],
-          ]
-          period = 60
-          stat   = "Sum"
-          view   = "timeSeries"
+    condition_threshold {
+      filter          = "resource.type=\"cloudsql_database\" AND resource.labels.database_id=\"${var.project_id}:${var.cloud_sql_instance}\" AND metric.type=\"cloudsql.googleapis.com/database/disk/utilization\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0.8
+      duration        = "300s"
+
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+    }
+  }
+
+  notification_channels = local.notification_channels
+  alert_strategy {
+    auto_close = "604800s"
+  }
+}
+
+# Memorystore: memory usage > 85%
+resource "google_monitoring_alert_policy" "redis_memory" {
+  project      = var.project_id
+  display_name = "[${var.environment}] Redis Memory > 85%"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Redis memory usage ratio"
+
+    condition_threshold {
+      filter          = "resource.type=\"redis_instance\" AND resource.labels.instance_id=\"${var.redis_instance_id}\" AND metric.type=\"redis.googleapis.com/stats/memory/usage_ratio\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0.85
+      duration        = "300s"
+
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_MEAN"
+      }
+    }
+  }
+
+  notification_channels = local.notification_channels
+  alert_strategy {
+    auto_close = "604800s"
+  }
+
+  documentation {
+    content   = "Redis memory is above 85%. Since maxmemory-policy is allkeys-lru, eviction is happening. Consider increasing the Memorystore tier."
+    mime_type = "text/markdown"
+  }
+}
+
+# API 5xx error rate (log-based metric)
+resource "google_monitoring_alert_policy" "api_5xx" {
+  project      = var.project_id
+  display_name = "[${var.environment}] API 5xx Error Rate High"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "API 5xx error count"
+
+    condition_threshold {
+      filter          = "resource.type=\"k8s_container\" AND metric.type=\"logging.googleapis.com/user/${local.name_prefix}-api-5xx-errors\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.api_5xx_threshold
+      duration        = "300s"
+
+      aggregations {
+        alignment_period     = "60s"
+        per_series_aligner   = "ALIGN_RATE"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+    }
+  }
+
+  notification_channels = local.notification_channels
+  alert_strategy {
+    auto_close = "604800s"
+  }
+
+  documentation {
+    content   = "The API is returning more than ${var.api_5xx_threshold} 5xx errors per 5-minute window. Check pod logs: kubectl logs -f deployment/vidshield-backend -n vidshield"
+    mime_type = "text/markdown"
+  }
+
+  depends_on = [google_logging_metric.api_5xx_errors]
+}
+
+# ── Uptime Checks ──────────────────────────────────────────────────────────────
+
+resource "google_monitoring_uptime_check_config" "api_health" {
+  count = var.api_health_check_host != "" ? 1 : 0
+
+  project      = var.project_id
+  display_name = "[${var.environment}] API Health Check"
+  timeout      = "10s"
+  period       = "60s"
+
+  http_check {
+    path         = "/health"
+    port         = 443
+    use_ssl      = true
+    validate_ssl = true
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.project_id
+      host       = var.api_health_check_host
+    }
+  }
+
+  content_matchers {
+    content = "healthy"
+    matcher = "CONTAINS_STRING"
+  }
+}
+
+# Alert when uptime check fails from 2+ regions
+resource "google_monitoring_alert_policy" "api_uptime" {
+  count = var.api_health_check_host != "" ? 1 : 0
+
+  project      = var.project_id
+  display_name = "[${var.environment}] API Uptime Check Failed"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Uptime check failure"
+
+    condition_threshold {
+      filter          = "resource.type=\"uptime_url\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.labels.check_id=\"${google_monitoring_uptime_check_config.api_health[0].uptime_check_id}\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 1
+      duration        = "120s"
+
+      aggregations {
+        alignment_period     = "60s"
+        per_series_aligner   = "ALIGN_NEXT_OLDER"
+        cross_series_reducer = "REDUCE_COUNT_FALSE"
+        group_by_fields      = ["resource.labels.host"]
+      }
+    }
+  }
+
+  notification_channels = local.notification_channels
+  alert_strategy {
+    auto_close = "86400s"
+  }
+
+  documentation {
+    content   = "The API health check at /health is failing from multiple GCP regions. The service may be down."
+    mime_type = "text/markdown"
+  }
+}
+
+# ── Cloud Monitoring Dashboard ──────────────────────────────────────────────────
+
+resource "google_monitoring_dashboard" "main" {
+  project = var.project_id
+  dashboard_json = jsonencode({
+    displayName = "VidShield — ${upper(var.environment)} Overview"
+    mosaicLayout = {
+      tiles = [
+        {
+          width  = 6
+          height = 4
+          widget = {
+            title = "GKE API — CPU Utilization"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"k8s_container\" AND resource.labels.cluster_name=\"${var.gke_cluster_name}\" AND resource.labels.container_name=\"api\" AND metric.type=\"kubernetes.io/container/cpu/request_utilization\""
+                    aggregation = {
+                      alignmentPeriod    = "60s"
+                      perSeriesAligner   = "ALIGN_MEAN"
+                      crossSeriesReducer = "REDUCE_MEAN"
+                    }
+                  }
+                }
+                plotType = "LINE"
+              }]
+              timeshiftDuration = "0s"
+              yAxis             = { label = "CPU Utilization", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 6
+          width  = 6
+          height = 4
+          widget = {
+            title = "GKE Worker — CPU Utilization"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"k8s_container\" AND resource.labels.cluster_name=\"${var.gke_cluster_name}\" AND resource.labels.container_name=\"worker\" AND metric.type=\"kubernetes.io/container/cpu/request_utilization\""
+                    aggregation = {
+                      alignmentPeriod    = "60s"
+                      perSeriesAligner   = "ALIGN_MEAN"
+                      crossSeriesReducer = "REDUCE_MEAN"
+                    }
+                  }
+                }
+                plotType = "LINE"
+              }]
+              timeshiftDuration = "0s"
+              yAxis             = { label = "CPU Utilization", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          yPos   = 4
+          width  = 6
+          height = 4
+          widget = {
+            title = "Cloud SQL — CPU & Connections"
+            xyChart = {
+              dataSets = [
+                {
+                  timeSeriesQuery = {
+                    timeSeriesFilter = {
+                      filter = "resource.type=\"cloudsql_database\" AND resource.labels.database_id=\"${var.project_id}:${var.cloud_sql_instance}\" AND metric.type=\"cloudsql.googleapis.com/database/cpu/utilization\""
+                      aggregation = {
+                        alignmentPeriod  = "60s"
+                        perSeriesAligner = "ALIGN_MEAN"
+                      }
+                    }
+                  }
+                  plotType       = "LINE"
+                  legendTemplate = "CPU"
+                },
+                {
+                  timeSeriesQuery = {
+                    timeSeriesFilter = {
+                      filter = "resource.type=\"cloudsql_database\" AND resource.labels.database_id=\"${var.project_id}:${var.cloud_sql_instance}\" AND metric.type=\"cloudsql.googleapis.com/database/postgresql/num_backends\""
+                      aggregation = {
+                        alignmentPeriod  = "60s"
+                        perSeriesAligner = "ALIGN_MEAN"
+                      }
+                    }
+                  }
+                  plotType       = "LINE"
+                  legendTemplate = "Connections"
+                }
+              ]
+              timeshiftDuration = "0s"
+              yAxis             = { label = "Value", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 6
+          yPos   = 4
+          width  = 6
+          height = 4
+          widget = {
+            title = "Redis — Memory Usage Ratio"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"redis_instance\" AND resource.labels.instance_id=\"${var.redis_instance_id}\" AND metric.type=\"redis.googleapis.com/stats/memory/usage_ratio\""
+                    aggregation = {
+                      alignmentPeriod  = "60s"
+                      perSeriesAligner = "ALIGN_MEAN"
+                    }
+                  }
+                }
+                plotType = "LINE"
+              }]
+              timeshiftDuration = "0s"
+              yAxis             = { label = "Usage Ratio", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          yPos   = 8
+          width  = 12
+          height = 4
+          widget = {
+            title = "API 5xx Error Count"
+            xyChart = {
+              dataSets = [{
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "resource.type=\"k8s_container\" AND metric.type=\"logging.googleapis.com/user/${local.name_prefix}-api-5xx-errors\""
+                    aggregation = {
+                      alignmentPeriod    = "60s"
+                      perSeriesAligner   = "ALIGN_RATE"
+                      crossSeriesReducer = "REDUCE_SUM"
+                    }
+                  }
+                }
+                plotType = "STACKED_BAR"
+              }]
+              timeshiftDuration = "0s"
+              yAxis             = { label = "Errors / min", scale = "LINEAR" }
+            }
+          }
         }
-      },
-      {
-        type   = "metric"
-        x      = 12
-        y      = 0
-        width  = 12
-        height = 6
-        properties = {
-          title  = "API — Target Response Time (p50/p99)"
-          region = var.aws_region
-          metrics = [
-            ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", var.alb_arn_suffix, { stat = "p50", label = "p50" }],
-            ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", var.alb_arn_suffix, { stat = "p99", label = "p99" }],
-          ]
-          period = 60
-          view   = "timeSeries"
-        }
-      },
-      {
-        type   = "metric"
-        x      = 0
-        y      = 6
-        width  = 12
-        height = 6
-        properties = {
-          title  = "ECS — CPU Utilization"
-          region = var.aws_region
-          metrics = [
-            ["AWS/ECS", "CPUUtilization", "ClusterName", var.ecs_cluster_name, "ServiceName", var.api_service_name, { label = "API" }],
-            ["AWS/ECS", "CPUUtilization", "ClusterName", var.ecs_cluster_name, "ServiceName", var.worker_service_name, { label = "Worker" }],
-          ]
-          period = 60
-          stat   = "Average"
-          view   = "timeSeries"
-        }
-      },
-      {
-        type   = "metric"
-        x      = 12
-        y      = 6
-        width  = 12
-        height = 6
-        properties = {
-          title  = "RDS — Connections & CPU"
-          region = var.aws_region
-          metrics = [
-            ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", var.rds_instance_id, { label = "Connections" }],
-            ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", var.rds_instance_id, { label = "CPU %" }],
-          ]
-          period = 60
-          stat   = "Average"
-          view   = "timeSeries"
-        }
-      },
-    ]
+      ]
+    }
   })
-}
-
-# ── CloudWatch Log Metric Filters ─────────────────────────────────────────────
-
-resource "aws_cloudwatch_log_metric_filter" "api_errors" {
-  name           = "${local.name_prefix}-api-errors"
-  log_group_name = "/ecs/${local.name_prefix}/api"
-  pattern        = "{ $.level = \"error\" || $.level = \"critical\" }"
-
-  metric_transformation {
-    name      = "ApiErrorCount"
-    namespace = "${local.name_prefix}/Application"
-    value     = "1"
-  }
 }
