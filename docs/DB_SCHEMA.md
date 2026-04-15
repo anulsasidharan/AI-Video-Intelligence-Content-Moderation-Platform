@@ -6,6 +6,8 @@ PostgreSQL **16**. ORM: SQLAlchemy 2.0. Migrations: Alembic under `backend/alemb
 
 **Head revision:** `0014_add_stripe_customer_id`
 
+**Object storage column names:** Columns named `s3_key`, `thumbnail_s3_key`, and report job `s3_key` are **historical names** from an earlier stack. In the current implementation they store **Google Cloud Storage object keys** (not Amazon S3). Application code and tools use `gs://` URLs where applicable. No schema rename is required for GCP operation.
+
 ---
 
 ## 1. Entity relationship (high level)

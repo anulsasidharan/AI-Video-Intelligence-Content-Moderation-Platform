@@ -1,268 +1,187 @@
+# ── Project ────────────────────────────────────────────────────────────────────
+
+variable "project_id" {
+  description = "GCP project ID (e.g. vidshield-prod)."
+  type        = string
+}
+
 variable "project" {
-  description = "Project name used as a prefix for all resource names."
+  description = "Short project name used as a prefix in resource names."
   type        = string
   default     = "vidshield"
+}
+
+variable "region" {
+  description = "GCP region for all regional resources."
+  type        = string
+  default     = "us-central1"
 }
 
 variable "environment" {
   description = "Deployment environment: dev | staging | prod."
   type        = string
+
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "environment must be dev, staging, or prod."
+  }
 }
 
-variable "aws_region" {
-  description = "AWS region for all resources."
+# ── GitHub (Workload Identity Federation) ─────────────────────────────────────
+
+variable "github_org" {
+  description = "GitHub organisation or user name that owns the repo."
   type        = string
-  default     = "us-east-1"
 }
 
-variable "aws_account_id" {
-  description = "AWS account ID. Used to construct globally unique names (e.g. S3 buckets)."
+variable "github_repo" {
+  description = "GitHub repository name (without the org prefix)."
   type        = string
-}
-
-variable "availability_zones" {
-  description = "List of AZs to use (must be within aws_region)."
-  type        = list(string)
-  default     = ["us-east-1a", "us-east-1b"]
+  default     = "vidshield-ai"
 }
 
 # ── VPC ────────────────────────────────────────────────────────────────────────
 
-variable "vpc_cidr" {
-  type    = string
-  default = "10.0.0.0/16"
+variable "subnet_cidr" {
+  description = "Primary CIDR for the GKE/workloads subnet."
+  type        = string
+  default     = "10.0.0.0/20"
 }
 
-variable "public_subnet_cidrs" {
-  type    = list(string)
-  default = ["10.0.1.0/24", "10.0.2.0/24"]
+variable "pods_cidr" {
+  description = "Secondary range CIDR for GKE pods."
+  type        = string
+  default     = "10.48.0.0/14"
 }
 
-variable "private_subnet_cidrs" {
-  type    = list(string)
-  default = ["10.0.11.0/24", "10.0.12.0/24"]
+variable "services_cidr" {
+  description = "Secondary range CIDR for GKE services."
+  type        = string
+  default     = "10.52.0.0/20"
 }
 
-variable "single_nat_gateway" {
-  description = "Use a single NAT GW (cheaper for dev/staging). Set false for prod."
-  type        = bool
-  default     = true
+variable "master_ipv4_cidr" {
+  description = "CIDR for the GKE control plane private endpoint."
+  type        = string
+  default     = "172.16.0.0/28"
 }
 
-# ── ECS images ─────────────────────────────────────────────────────────────────
+variable "private_services_cidr" {
+  description = "CIDR allocated for VPC peering with managed services (Cloud SQL, Memorystore)."
+  type        = string
+  default     = "10.64.0.0/16"
+}
 
-variable "ecr_backend_image" {
-  description = "Full ECR URI for the backend image."
+# ── GKE ────────────────────────────────────────────────────────────────────────
+
+variable "gke_cluster_name" {
+  description = "Name of the GKE cluster."
   type        = string
 }
 
-variable "ecr_frontend_image" {
-  description = "Full ECR URI for the frontend image."
+variable "gke_machine_type" {
+  description = "Machine type for GKE worker nodes."
   type        = string
+  default     = "e2-standard-4"
 }
 
-# ── ECS sizing ─────────────────────────────────────────────────────────────────
-
-variable "api_cpu" {
-  type    = number
-  default = 512
+variable "gke_min_nodes" {
+  description = "Minimum number of nodes per zone for autoscaling."
+  type        = number
+  default     = 1
 }
 
-variable "api_memory" {
-  type    = number
-  default = 1024
+variable "gke_max_nodes" {
+  description = "Maximum number of nodes per zone for autoscaling."
+  type        = number
+  default     = 5
 }
 
-variable "api_desired_count" {
-  type    = number
-  default = 1
+variable "gke_disk_size_gb" {
+  description = "Boot disk size in GB for each GKE node."
+  type        = number
+  default     = 50
 }
 
-variable "worker_cpu" {
-  type    = number
-  default = 1024
-}
+# ── Artifact Registry ─────────────────────────────────────────────────────────
 
-variable "worker_memory" {
-  type    = number
-  default = 2048
-}
-
-variable "worker_desired_count" {
-  type    = number
-  default = 1
-}
-
-variable "frontend_cpu" {
-  type    = number
-  default = 256
-}
-
-variable "frontend_memory" {
-  type    = number
-  default = 512
-}
-
-variable "frontend_desired_count" {
-  type    = number
-  default = 1
-}
-
-# ── Secrets ARNs (provisioned outside Terraform) ─────────────────────────────
-
-variable "db_secret_arn" {
-  description = "ARN of Secrets Manager secret containing DATABASE_URL."
+variable "gar_repository" {
+  description = "Artifact Registry repository ID (e.g. vidshield)."
   type        = string
+  default     = "vidshield"
 }
 
-variable "redis_secret_arn" {
-  description = "ARN of Secrets Manager secret containing REDIS_URL."
+# ── Cloud SQL ─────────────────────────────────────────────────────────────────
+
+variable "db_tier" {
+  description = "Cloud SQL machine tier (e.g. db-f1-micro, db-g1-small, db-custom-2-4096)."
   type        = string
+  default     = "db-g1-small"
 }
 
-variable "secret_key_arn" {
-  description = "ARN of Secrets Manager secret containing the app SECRET_KEY."
+variable "db_disk_size_gb" {
+  description = "Initial disk size in GB for Cloud SQL."
+  type        = number
+  default     = 20
+}
+
+variable "db_name" {
+  description = "Database name to create inside the Cloud SQL instance."
   type        = string
+  default     = "vidshield"
 }
 
-variable "openai_api_key_arn" {
-  description = "ARN of Secrets Manager secret for OPENAI_API_KEY."
+variable "db_username" {
+  description = "Database user to create."
   type        = string
+  default     = "vidshield"
 }
 
-variable "pinecone_api_key_arn" {
-  description = "ARN of Secrets Manager secret for PINECONE_API_KEY."
+# ── Memorystore Redis ─────────────────────────────────────────────────────────
+
+variable "redis_tier" {
+  description = "Redis service tier: BASIC or STANDARD_HA."
   type        = string
+  default     = "BASIC"
+
+  validation {
+    condition     = contains(["BASIC", "STANDARD_HA"], var.redis_tier)
+    error_message = "redis_tier must be BASIC or STANDARD_HA."
+  }
 }
 
-variable "sentry_dsn_arn" {
-  description = "ARN of Secrets Manager secret for SENTRY_DSN. Leave empty to skip."
-  type        = string
-  default     = ""
+variable "redis_memory_size_gb" {
+  description = "Redis in-memory size in GB."
+  type        = number
+  default     = 1
 }
 
-variable "db_password_secret_arn" {
-  description = "ARN of Secrets Manager secret containing the RDS master password."
-  type        = string
-}
-
-# ── RDS ────────────────────────────────────────────────────────────────────────
-
-variable "rds_instance_class" {
-  type    = string
-  default = "db.t4g.medium"
-}
-
-variable "rds_allocated_storage" {
-  type    = number
-  default = 20
-}
-
-variable "rds_max_allocated_storage" {
-  type    = number
-  default = 100
-}
-
-variable "rds_multi_az" {
-  type    = bool
-  default = false
-}
-
-variable "rds_backup_retention_days" {
-  type    = number
-  default = 7
-}
-
-variable "rds_deletion_protection" {
-  type    = bool
-  default = false
-}
-
-variable "rds_skip_final_snapshot" {
-  type    = bool
-  default = true
-}
-
-# ── ElastiCache ────────────────────────────────────────────────────────────────
-
-variable "redis_node_type" {
-  type    = string
-  default = "cache.t4g.small"
-}
-
-variable "redis_num_cache_nodes" {
-  type    = number
-  default = 1
-}
-
-# ── S3 / CloudFront ────────────────────────────────────────────────────────────
-
-variable "s3_force_destroy" {
-  type    = bool
-  default = false
-}
-
-variable "certificate_arn" {
-  description = "ACM certificate ARN for HTTPS (must be in us-east-1). Leave empty to skip HTTPS."
-  type        = string
-  default     = ""
-}
-
-variable "domain_aliases" {
-  type    = list(string)
-  default = []
-}
-
-variable "cloudfront_price_class" {
-  type    = string
-  default = "PriceClass_100"
-}
+# ── GCS ────────────────────────────────────────────────────────────────────────
 
 variable "cors_origins" {
-  type    = string
-  default = "[\"*\"]"
+  description = "List of allowed CORS origins for GCS buckets."
+  type        = list(string)
+  default     = ["*"]
 }
 
-# ── WAF ────────────────────────────────────────────────────────────────────────
+# ── Cloud Armor ───────────────────────────────────────────────────────────────
 
-variable "waf_ip_rate_limit" {
-  description = "Max requests per IP per 5-minute window before WAF blocks the IP. AWS minimum: 100."
+variable "armor_ip_rate_limit" {
+  description = "Max requests per IP per minute before Cloud Armor blocks the request."
   type        = number
-  default     = 2000
+  default     = 100
 }
 
-variable "waf_enable_crs" {
-  description = "Enable AWS Managed Core Rule Set (OWASP Top 10 protections)."
+variable "armor_enable_owasp" {
+  description = "Enable Cloud Armor pre-configured OWASP WAF rules."
   type        = bool
   default     = true
 }
 
-variable "waf_enable_ip_reputation" {
-  description = "Enable AWS Managed IP Reputation list (botnet / tor exit node blocking)."
-  type        = bool
-  default     = true
-}
+# ── Monitoring ────────────────────────────────────────────────────────────────
 
-variable "waf_enable_known_bad_inputs" {
-  description = "Enable AWS Managed Known Bad Inputs rule set (Log4j, SSRF, etc.)."
-  type        = bool
-  default     = true
-}
-
-# ── Monitoring ─────────────────────────────────────────────────────────────────
-
-variable "alarm_email" {
-  description = "Email address to subscribe to the alerts SNS topic. Leave empty to skip."
+variable "alert_email" {
+  description = "Email address for Cloud Monitoring alert notifications. Leave empty to skip."
   type        = string
   default     = ""
-}
-
-variable "api_5xx_threshold" {
-  type    = number
-  default = 10
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
 }

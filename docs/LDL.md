@@ -1,6 +1,6 @@
 # VidShield AI — Low-Level Design (LDL)
 
-This document is the **Low-Level Design (LDL)** for VidShield AI: concrete modules, routes, dependencies, queues, and behavioral contracts as found in the repository. It complements [HDL.md](HDL.md).
+This document is the **Low-Level Design (LDL)** for VidShield AI: concrete modules, routes, dependencies, queues, and behavioral contracts as found in the repository. It complements [HDL.md](HDL.md). For GCP deployment details, see **[GCP_DEPLOYMENT_RUNBOOK.md](GCP_DEPLOYMENT_RUNBOOK.md)** and **[GCP-ARCHITECTURE-DESIGN.md](GCP-ARCHITECTURE-DESIGN.md)**.
 
 **Convention:** Paths are relative to repo root unless stated.
 
@@ -93,7 +93,7 @@ Worker sync DB: `backend/app/core/sync_db.py` + `backend/app/workers/celery_app.
 |------|----------|
 | App | `backend/app/workers/celery_app.py` — `celery_app = Celery("vidshield")` |
 | Broker / backend | `settings.CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` (derived from `REDIS_URL` if unset) |
-| TLS | If broker starts with `rediss://`, `ssl.CERT_NONE` for ElastiCache-style endpoints |
+| TLS | If broker starts with `rediss://`, `ssl.CERT_NONE` for Memorystore-style TLS endpoints |
 | Task routes | `video` ← `video_tasks.*`, `moderation` ← `moderation_tasks.*`, `streams` ← `stream_tasks.*`, `analytics`, `cleanup`, `reports`, `notifications` |
 | Autodiscover | `video_tasks`, `moderation_tasks`, `analytics_tasks`, `cleanup_tasks`, `report_tasks`, `notification_tasks`, `stream_tasks` |
 | Beat | `daily-digest-0800-utc` → `send_daily_digests_beat_task` on `notifications` queue |
@@ -177,15 +177,15 @@ sequenceDiagram
   participant DB as PostgreSQL
   participant Q as Celery reports queue
   participant W as report_tasks
-  participant S3 as S3
+  participant GCS as GCS
 
   C->>R: POST /api/v1/reports/generate
   R->>DB: insert ReportJob pending
   R->>Q: enqueue task
   R-->>C: job id / accepted
   W->>DB: load job, update status
-  W->>S3: upload artifact
-  W->>DB: set s3_key, status completed
+  W->>GCS: upload artifact
+  W->>DB: set s3_key column to GCS object key, status completed
 ```
 
 ---
@@ -197,7 +197,7 @@ Defined in `backend/app/config.py` (subset):
 - `APP_NAME`, `APP_ENV`, `DEBUG`
 - `DATABASE_URL`, `DATABASE_URL_SYNC`, `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
 - `SECRET_KEY`, `JWT_ALGORITHM`, token TTLs, `FRONTEND_URL`, password reset limits
-- `AWS_*`, `S3_BUCKET_NAME`, `S3_PRESIGNED_URL_EXPIRE`
+- `GCP_PROJECT_ID`, `GCS_BUCKET_NAME`, `GCS_PRESIGNED_URL_EXPIRE`, optional `GCS_SERVICE_ACCOUNT_KEY_PATH` (empty on GKE with Workload Identity)
 - `OPENAI_*`, `PINECONE_*`
 - `SENDGRID_*`, `TWILIO_*`
 - `STRIPE_*`
@@ -226,7 +226,7 @@ Frontend: `NEXT_PUBLIC_*`, `API_UPSTREAM_URL` (build-time / runtime per Next).
 | New REST endpoint | `api/v1/<domain>.py`, `schemas/`, optional `services/`, tests under `backend/tests/` |
 | New table | `models/`, new Alembic revision, optional seed |
 | New async job | `workers/<module>.py`, `celery_app.py` route + queue name, Docker Compose worker `--queues` |
-| New env var | `config.py`, `.env.example`, deployment secrets (ECS task def / Terraform) |
+| New env var | `config.py`, `.env.example`, Secret Manager / GKE Deployment env |
 | New UI page | `frontend/src/app/...`, components, `lib/api.ts` |
 
 ---

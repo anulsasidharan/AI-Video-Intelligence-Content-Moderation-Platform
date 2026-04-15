@@ -1,49 +1,49 @@
-output "vpc_id" {
-  description = "ID of the VPC."
-  value       = aws_vpc.this.id
+output "network_id" {
+  description = "The ID of the VPC network."
+  value       = google_compute_network.vpc.id
 }
 
-output "vpc_cidr" {
-  description = "CIDR block of the VPC."
-  value       = aws_vpc.this.cidr_block
+output "network_name" {
+  description = "The name of the VPC network."
+  value       = google_compute_network.vpc.name
 }
 
-output "public_subnet_ids" {
-  description = "IDs of the public subnets."
-  value       = aws_subnet.public[*].id
+output "network_self_link" {
+  description = "The self-link of the VPC network."
+  value       = google_compute_network.vpc.self_link
 }
 
-output "private_subnet_ids" {
-  description = "IDs of the private subnets."
-  value       = aws_subnet.private[*].id
+output "subnetwork_id" {
+  description = "The ID of the primary subnetwork."
+  value       = google_compute_subnetwork.private.id
 }
 
-output "sg_alb_id" {
-  description = "Security group ID for the Application Load Balancer."
-  value       = aws_security_group.alb.id
+output "subnetwork_name" {
+  description = "The name of the primary subnetwork."
+  value       = google_compute_subnetwork.private.name
 }
 
-output "sg_ecs_api_id" {
-  description = "Security group ID for ECS API tasks."
-  value       = aws_security_group.ecs_api.id
+output "subnetwork_self_link" {
+  description = "The self-link of the primary subnetwork."
+  value       = google_compute_subnetwork.private.self_link
 }
 
-output "sg_ecs_frontend_id" {
-  description = "Security group ID for ECS Frontend tasks."
-  value       = aws_security_group.ecs_frontend.id
+output "pods_range_name" {
+  description = "Secondary range name for GKE pods."
+  value       = "pods"
 }
 
-output "sg_ecs_worker_id" {
-  description = "Security group ID for ECS Celery worker tasks."
-  value       = aws_security_group.ecs_worker.id
+output "services_range_name" {
+  description = "Secondary range name for GKE services."
+  value       = "services"
 }
 
-output "sg_rds_id" {
-  description = "Security group ID for RDS."
-  value       = aws_security_group.rds.id
+output "private_services_range_name" {
+  description = "Name of the global address reserved for private services access."
+  value       = google_compute_global_address.private_services_range.name
 }
 
-output "sg_redis_id" {
-  description = "Security group ID for ElastiCache Redis."
-  value       = aws_security_group.redis.id
+output "private_vpc_connection_id" {
+  description = "ID of the VPC peering connection to Google managed services."
+  value       = google_service_networking_connection.private_vpc_connection.id
 }

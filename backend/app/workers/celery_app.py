@@ -54,8 +54,8 @@ def sync_session() -> Generator[Session, None, None]:
 
 celery_app = Celery("vidshield")
 
-# ElastiCache uses TLS (rediss://) — disable cert verification (Amazon CA not in
-# container trust store). For plain redis:// no SSL options are needed.
+# Cloud Memorystore for Redis uses TLS (rediss://) — disable cert verification
+# (GCP CA may not be in container trust store). For plain redis:// no SSL options are needed.
 _use_tls = settings.CELERY_BROKER_URL.startswith("rediss://")
 _ssl_opts: dict = {"ssl_cert_reqs": ssl.CERT_NONE} if _use_tls else {}
 

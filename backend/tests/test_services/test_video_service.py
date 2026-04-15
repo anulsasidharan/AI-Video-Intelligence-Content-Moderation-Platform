@@ -54,8 +54,8 @@ def _make_db(video=None):
 
 def _make_storage():
     storage = MagicMock()
-    storage.presigned_put_url.return_value = "https://s3.example.com/put"
-    storage.presigned_get_url.return_value = "https://s3.example.com/get"
+    storage.presigned_put_url.return_value = "https://storage.googleapis.com/signed-put-url"
+    storage.presigned_get_url.return_value = "https://storage.googleapis.com/signed-get-url"
     return storage
 
 
@@ -73,7 +73,7 @@ class TestGenerateUploadUrl:
         result = service.generate_upload_url(_OWNER_ID, "myvideo.mp4", "video/mp4")
 
         storage.presigned_put_url.assert_called_once()
-        assert result.upload_url == "https://s3.example.com/put"
+        assert result.upload_url == "https://storage.googleapis.com/signed-put-url"
         assert "myvideo.mp4" in result.s3_key
 
 

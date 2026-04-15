@@ -27,14 +27,16 @@ services:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       SECRET_KEY: ${SECRET_KEY}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID}
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME}
+      # Leave blank on GKE — Workload Identity handles auth via ADC.
+      # Set to a service-account JSON key path for non-GKE deployments.
+      GCS_SERVICE_ACCOUNT_KEY_PATH: ${GCS_SERVICE_ACCOUNT_KEY_PATH:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       PINECONE_API_KEY: ${PINECONE_API_KEY}
       SENTRY_DSN: ${SENTRY_DSN}
       CORS_ORIGINS: ${CORS_ORIGINS}
-      # Required behind ALB/CloudFront so Starlette/FastAPI redirects use https://
+      # Required behind Cloud Load Balancer / Cloud CDN so FastAPI redirects use https://
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
     command: >
       sh -c "alembic upgrade head &&

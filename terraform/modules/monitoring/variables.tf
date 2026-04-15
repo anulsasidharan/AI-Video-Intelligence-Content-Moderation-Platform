@@ -1,85 +1,53 @@
+variable "project_id" {
+  description = "GCP project ID."
+  type        = string
+}
+
 variable "project" {
-  type = string
+  description = "Short project name prefix."
+  type        = string
+  default     = "vidshield"
+}
+
+variable "region" {
+  description = "GCP region."
+  type        = string
 }
 
 variable "environment" {
-  type = string
-}
-
-variable "aws_region" {
-  type = string
-}
-
-variable "ecs_cluster_name" {
-  type = string
-}
-
-variable "api_service_name" {
-  type = string
-}
-
-variable "worker_service_name" {
-  type = string
-}
-
-variable "alb_arn_suffix" {
-  description = "ALB ARN suffix (the part after 'loadbalancer/') for CloudWatch metric dimensions."
+  description = "Deployment environment: dev | staging | prod."
   type        = string
 }
 
-variable "rds_instance_id" {
-  description = "RDS instance identifier for DB alarms."
+variable "alert_email" {
+  description = "Email address for alert notifications. Leave empty to skip notification channel creation."
+  type        = string
+  default     = ""
+}
+
+variable "gke_cluster_name" {
+  description = "GKE cluster name — used to scope metric filters."
   type        = string
 }
 
-variable "redis_replication_group_id" {
-  description = "ElastiCache replication group ID for cache alarms."
+variable "cloud_sql_instance" {
+  description = "Cloud SQL instance name — used to scope metric filters."
   type        = string
 }
 
-variable "alarm_actions" {
-  description = "List of SNS topic ARNs to notify on alarm state."
-  type        = list(string)
-  default     = []
-}
-
-variable "ok_actions" {
-  description = "List of SNS topic ARNs to notify on OK state."
-  type        = list(string)
-  default     = []
+variable "redis_instance_id" {
+  description = "Cloud Memorystore Redis instance ID — used to scope metric filters."
+  type        = string
 }
 
 variable "api_5xx_threshold" {
-  description = "Number of API 5xx errors per 5 minutes before firing an alarm."
+  description = "Number of 5xx errors per 5 minutes that triggers the alert."
   type        = number
   default     = 10
 }
 
-variable "cpu_utilization_threshold" {
-  description = "ECS task CPU utilization (%) above which the alarm fires."
-  type        = number
-  default     = 80
-}
-
-variable "memory_utilization_threshold" {
-  description = "ECS task memory utilization (%) above which the alarm fires."
-  type        = number
-  default     = 85
-}
-
-variable "db_connection_threshold" {
-  description = "Number of DB connections above which the alarm fires."
-  type        = number
-  default     = 100
-}
-
-variable "log_retention_days" {
-  description = "Default retention for CloudWatch log groups created by this module."
-  type        = number
-  default     = 30
-}
-
-variable "tags" {
-  type    = map(string)
-  default = {}
+variable "api_health_check_host" {
+  description = "Hostname for the API uptime check (e.g. api.vidshield.ai). Leave empty to skip."
+  type        = string
+  default     = ""
 }

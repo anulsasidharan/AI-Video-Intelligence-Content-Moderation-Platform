@@ -8,13 +8,17 @@ path is never blocked.
 Task execution order for a full pipeline run:
 
     process_video(video_id, s3_key)
-        ├── extract_frames_task(video_id, s3_url)
+        ├── extract_frames_task(video_id, gcs_url)
         ├── transcribe_audio_task(video_id, local_path)
         ├── generate_thumbnail_task(video_id, s3_key)
-        └── run_analysis_pipeline_task(video_id, s3_url, policy_rules)
+        └── run_analysis_pipeline_task(video_id, gcs_url, policy_rules)
 
 Public entry point:
     process_video.delay(video_id="...", s3_key="videos/abc.mp4")
+
+Note: The `s3_key` parameter name is kept for backwards compatibility with
+existing Celery task signatures and database column names. The underlying
+storage is Google Cloud Storage (GCS).
 """
 
 from __future__ import annotations
@@ -27,9 +31,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-import boto3
 import structlog
 from celery import shared_task
+from google.cloud import storage as gcs_storage
 
 from app.ai.graphs.video_analysis_graph import run_video_analysis
 from app.ai.tools.audio_transcriber import transcribe_audio
@@ -46,18 +50,21 @@ logger = structlog.get_logger(__name__)
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def _s3_url(s3_key: str) -> str:
-    """Build an s3:// URL from a storage key."""
-    return f"s3://{settings.S3_BUCKET_NAME}/{s3_key}"
+def _gcs_url(s3_key: str) -> str:
+    """Build a gs:// URL from a storage key."""
+    return f"gs://{settings.GCS_BUCKET_NAME}/{s3_key}"
 
 
-def _s3_client():
-    return boto3.client(
-        "s3",
-        region_name=settings.AWS_REGION,
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID or None,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY or None,
-    )
+def _gcs_client() -> gcs_storage.Client:
+    """Return a GCS client using Application Default Credentials."""
+    kwargs: dict = {}
+    if settings.GCP_PROJECT_ID:
+        kwargs["project"] = settings.GCP_PROJECT_ID
+    if settings.GCS_SERVICE_ACCOUNT_KEY_PATH:
+        return gcs_storage.Client.from_service_account_json(
+            settings.GCS_SERVICE_ACCOUNT_KEY_PATH, **kwargs
+        )
+    return gcs_storage.Client(**kwargs)
 
 
 def _set_video_status(video_id: str, status: VideoStatus, error: str | None = None) -> None:
@@ -88,7 +95,7 @@ def extract_frames_task(
     max_frames: int = 30,
 ) -> dict[str, Any]:
     """
-    Extract frames from an S3-hosted video using T-01 FrameExtractor.
+    Extract frames from a GCS-hosted video using T-01 FrameExtractor.
 
     Returns:
         {"frames": [...], "timestamps": [...], "fps": float, "duration": float}
@@ -96,7 +103,7 @@ def extract_frames_task(
     logger.info("extract_frames_task_start", video_id=video_id, s3_key=s3_key)
     try:
         result = extract_frames(
-            _s3_url(s3_key),
+            _gcs_url(s3_key),
             interval_seconds=interval_seconds,
             max_frames=max_frames,
         )
@@ -132,18 +139,18 @@ def transcribe_audio_task(
     language: str | None = None,
 ) -> dict[str, Any]:
     """
-    Download video from S3 to a temp file and transcribe via T-02 AudioTranscriber.
+    Download video from GCS to a temp file and transcribe via T-02 AudioTranscriber.
 
     Returns:
         {"text": str, "segments": [...], "language": str, "error": str | None}
     """
     logger.info("transcribe_audio_task_start", video_id=video_id)
 
-    # Download S3 object to a temp file for FFmpeg
+    # Download GCS object to a temp file for FFmpeg
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".mp4")
     os.close(tmp_fd)
     try:
-        _s3_client().download_file(settings.S3_BUCKET_NAME, s3_key, tmp_path)
+        _gcs_client().bucket(settings.GCS_BUCKET_NAME).blob(s3_key).download_to_filename(tmp_path)
         result = asyncio.run(transcribe_audio(tmp_path, language=language))
         logger.info(
             "transcribe_audio_task_done",
@@ -177,10 +184,10 @@ def transcribe_audio_task(
 def generate_thumbnail_task(self, video_id: str, s3_key: str) -> str | None:
     """
     Generate a JPEG thumbnail from the video's first keyframe using FFmpeg
-    and upload it to S3.
+    and upload it to GCS.
 
     Returns:
-        The S3 key of the thumbnail, or None on failure.
+        The GCS object key of the thumbnail, or None on failure.
     """
     logger.info("generate_thumbnail_task_start", video_id=video_id)
     tmp_video_fd, tmp_video = tempfile.mkstemp(suffix=".mp4")
@@ -189,7 +196,8 @@ def generate_thumbnail_task(self, video_id: str, s3_key: str) -> str | None:
     os.close(tmp_thumb_fd)
 
     try:
-        _s3_client().download_file(settings.S3_BUCKET_NAME, s3_key, tmp_video)
+        gcs = _gcs_client()
+        gcs.bucket(settings.GCS_BUCKET_NAME).blob(s3_key).download_to_filename(tmp_video)
 
         cmd = [
             "ffmpeg",
@@ -210,7 +218,9 @@ def generate_thumbnail_task(self, video_id: str, s3_key: str) -> str | None:
             return None
 
         thumb_key = f"thumbnails/{video_id}.jpg"
-        _s3_client().upload_file(tmp_thumb, settings.S3_BUCKET_NAME, thumb_key)
+        gcs.bucket(settings.GCS_BUCKET_NAME).blob(thumb_key).upload_from_filename(
+            tmp_thumb, content_type="image/jpeg"
+        )
 
         # Persist thumbnail key on the video row
         with sync_session() as db:
@@ -262,7 +272,7 @@ def run_analysis_pipeline_task(
         report = asyncio.run(
             run_video_analysis(
                 video_id=video_id,
-                video_url=_s3_url(s3_key),
+                video_url=_gcs_url(s3_key),
                 policy_rules=policy_rules or [],
                 frames=frames,
                 transcript=transcript,
@@ -529,16 +539,13 @@ def process_url_video_task(
             duration: float | None = info.get("duration")
             file_size: int = os.path.getsize(tmp_video_path)
 
-            # Upload video to S3
+            # Upload video to GCS
             s3_key = f"url-videos/{video_id}/video{os.path.splitext(tmp_video_path)[1]}"
-            with open(tmp_video_path, "rb") as fh:
-                _s3_client().upload_fileobj(
-                    fh,
-                    settings.S3_BUCKET_NAME,
-                    s3_key,
-                    ExtraArgs={"ContentType": "video/mp4"},
-                )
-            logger.info("process_url_video_s3_upload_done", video_id=video_id, s3_key=s3_key)
+            gcs = _gcs_client()
+            gcs.bucket(settings.GCS_BUCKET_NAME).blob(s3_key).upload_from_filename(
+                tmp_video_path, content_type="video/mp4"
+            )
+            logger.info("process_url_video_gcs_upload_done", video_id=video_id, s3_key=s3_key)
 
             # Upload thumbnail — prefer platform thumbnail, fall back to FFmpeg
             thumb_key: str | None = None
@@ -551,13 +558,9 @@ def process_url_video_task(
             if thumb_candidates:
                 thumb_src = os.path.join(tmpdir, thumb_candidates[0])
                 thumb_key = f"thumbnails/{video_id}.jpg"
-                with open(thumb_src, "rb") as fh:
-                    _s3_client().upload_fileobj(
-                        fh,
-                        settings.S3_BUCKET_NAME,
-                        thumb_key,
-                        ExtraArgs={"ContentType": "image/jpeg"},
-                    )
+                gcs.bucket(settings.GCS_BUCKET_NAME).blob(thumb_key).upload_from_filename(
+                    thumb_src, content_type="image/jpeg"
+                )
             else:
                 # Generate via FFmpeg as fallback
                 tmp_thumb_fd, tmp_thumb_path = tempfile.mkstemp(suffix=".jpg")
@@ -577,7 +580,9 @@ def process_url_video_task(
                 proc = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
                 if proc.returncode == 0:
                     thumb_key = f"thumbnails/{video_id}.jpg"
-                    _s3_client().upload_file(tmp_thumb_path, settings.S3_BUCKET_NAME, thumb_key)
+                    gcs.bucket(settings.GCS_BUCKET_NAME).blob(thumb_key).upload_from_filename(
+                        tmp_thumb_path, content_type="image/jpeg"
+                    )
 
             # Persist metadata on the Video record
             with sync_session() as db:

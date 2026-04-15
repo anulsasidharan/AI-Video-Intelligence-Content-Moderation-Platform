@@ -100,7 +100,7 @@ async def create_stream(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> StreamResponse:
     stream_id = uuid.uuid4()
-    ingest_url = f"rtmp://{settings.AWS_REGION}.ingest.vidshield.ai/live/{stream_id}"
+    ingest_url = f"rtmp://{settings.RTMP_INGEST_HOST}/live/{stream_id}"
 
     stream = LiveStream(
         id=stream_id,

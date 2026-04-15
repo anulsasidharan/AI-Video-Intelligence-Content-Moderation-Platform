@@ -1,12 +1,12 @@
 """
 T-01 Frame Extractor Tool
 
-Samples frames from a video file (local path or s3:// URL) at a configurable
+Samples frames from a video file (local path or gs:// URL) at a configurable
 interval using OpenCV.  Returns base64-encoded JPEG frames and their timestamps.
 
 Public API:
     result = extract_frames(
-        video_path="s3://my-bucket/videos/v1.mp4",
+        video_path="gs://my-bucket/videos/v1.mp4",
         interval_seconds=2.0,
         max_frames=30,
     )
@@ -25,8 +25,6 @@ import tempfile
 import cv2
 import structlog
 from pydantic import BaseModel, Field
-
-from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -59,38 +57,34 @@ class FrameExtractionError(RuntimeError):
     pass
 
 
-# ── S3 download helper ────────────────────────────────────────────────────────
+# ── GCS download helper ───────────────────────────────────────────────────────
 
 
-def _download_from_s3(s3_url: str) -> str:
-    """Download an S3 object to a temp file and return the local path."""
-    import boto3
-    from botocore.exceptions import BotoCoreError, ClientError
+def _download_from_gcs(gcs_url: str) -> str:
+    """Download a GCS object to a temp file and return the local path."""
+    from google.cloud import storage
+    from google.cloud.exceptions import GoogleCloudError
 
-    if not s3_url.startswith("s3://"):
-        raise FrameExtractionError(f"Unsupported URL scheme for S3 download: {s3_url}")
+    if not gcs_url.startswith("gs://"):
+        raise FrameExtractionError(f"Unsupported URL scheme for GCS download: {gcs_url}")
 
-    without_prefix = s3_url[5:]
-    bucket, _, key = without_prefix.partition("/")
-    if not key:
-        raise FrameExtractionError(f"Invalid S3 URL (missing key): {s3_url}")
+    without_prefix = gcs_url[5:]
+    bucket_name, _, object_name = without_prefix.partition("/")
+    if not object_name:
+        raise FrameExtractionError(f"Invalid GCS URL (missing object name): {gcs_url}")
 
-    s3 = boto3.client(
-        "s3",
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID or None,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY or None,
-        region_name=settings.AWS_REGION,
-    )
+    client = storage.Client()
+    blob = client.bucket(bucket_name).blob(object_name)
 
-    suffix = os.path.splitext(key)[-1] or ".mp4"
+    suffix = os.path.splitext(object_name)[-1] or ".mp4"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         try:
-            s3.download_fileobj(bucket, key, tmp)
+            blob.download_to_file(tmp)
             tmp.flush()
             return tmp.name
-        except (BotoCoreError, ClientError) as exc:
+        except GoogleCloudError as exc:
             os.unlink(tmp.name)
-            raise FrameExtractionError(f"S3 download failed for {s3_url}: {exc}") from exc
+            raise FrameExtractionError(f"GCS download failed for {gcs_url}: {exc}") from exc
 
 
 # ── Core extraction ───────────────────────────────────────────────────────────
@@ -167,7 +161,7 @@ def extract_frames(
     Extract frames from a video at a fixed time interval.
 
     Args:
-        video_path:        Local file path or s3:// URL.
+        video_path:        Local file path or gs:// URL.
         interval_seconds:  Sample one frame every N seconds (default 2.0).
         max_frames:        Maximum number of frames to return (default 30).
 
@@ -176,14 +170,14 @@ def extract_frames(
 
     Raises:
         FrameExtractionError: If the video cannot be opened, is unreadable,
-                              or the S3 download fails.
+                              or the GCS download fails.
     """
     tmp_to_delete: str | None = None
     local_path = video_path
 
-    if video_path.startswith("s3://"):
-        logger.info("frame_extractor_s3_download", url=video_path)
-        local_path = _download_from_s3(video_path)
+    if video_path.startswith("gs://"):
+        logger.info("frame_extractor_gcs_download", url=video_path)
+        local_path = _download_from_gcs(video_path)
         tmp_to_delete = local_path
 
     try:

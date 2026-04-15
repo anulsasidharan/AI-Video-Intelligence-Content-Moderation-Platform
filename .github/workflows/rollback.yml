@@ -19,19 +19,17 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GAR_LOCATION: ${{ secrets.GAR_LOCATION }}
+  GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER_PROD }}
+  GKE_LOCATION: ${{ secrets.GKE_CLUSTER_LOCATION }}
   ROLLBACK_TAG: ${{ github.event.inputs.rollback_tag }}
-  ECS_CLUSTER: vidshieldai-cluster-prod
-  ECS_BACKEND_SERVICE: vidshield-prod-api
-  ECS_WORKER_SERVICE: vidshield-prod-worker
-  ECS_FRONTEND_SERVICE: vidshield-prod-frontend
-  TASK_DEF_API: vidshield-prod-api
-  TASK_DEF_WORKER: vidshield-prod-worker
-  TASK_DEF_FRONTEND: vidshield-prod-frontend
+  K8S_NAMESPACE: vidshield
 
 permissions:
   contents: read
+  id-token: write   # required for Workload Identity Federation
 
 jobs:
   # ── Validate rollback target ────────────────────────────────────────────────────
@@ -45,23 +43,19 @@ jobs:
       rollback_frontend: ${{ steps.parse.outputs.rollback_frontend }}
 
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Parse target services
         id: parse
         run: |
           SERVICES="${{ github.event.inputs.services }}"
           if [ "$SERVICES" = "all" ]; then
-            echo "rollback_api=true"     >> "$GITHUB_OUTPUT"
-            echo "rollback_worker=true"  >> "$GITHUB_OUTPUT"
+            echo "rollback_api=true"      >> "$GITHUB_OUTPUT"
+            echo "rollback_worker=true"   >> "$GITHUB_OUTPUT"
             echo "rollback_frontend=true" >> "$GITHUB_OUTPUT"
           else
             [[ "$SERVICES" == *"api"*      ]] && echo "rollback_api=true"      >> "$GITHUB_OUTPUT" || echo "rollback_api=false"      >> "$GITHUB_OUTPUT"
@@ -69,217 +63,128 @@ jobs:
             [[ "$SERVICES" == *"frontend"* ]] && echo "rollback_frontend=true" >> "$GITHUB_OUTPUT" || echo "rollback_frontend=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify backend image exists in ECR
+      - name: Verify backend image exists in Artifact Registry
         if: steps.parse.outputs.rollback_api == 'true' || steps.parse.outputs.rollback_worker == 'true'
         run: |
-          aws ecr describe-images \
-            --repository-name vidshieldai-backend-prod \
-            --image-ids imageTag=${{ env.ROLLBACK_TAG }} \
-            --region ${{ env.AWS_REGION }} \
-            || (echo "ERROR: backend image tag '${{ env.ROLLBACK_TAG }}' not found in ECR" && exit 1)
+          gcloud artifacts docker images describe \
+            "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-backend:${{ env.ROLLBACK_TAG }}" \
+            --project ${{ env.GCP_PROJECT_ID }} \
+            || (echo "ERROR: backend image tag '${{ env.ROLLBACK_TAG }}' not found in Artifact Registry" && exit 1)
 
-      - name: Verify frontend image exists in ECR
+      - name: Verify frontend image exists in Artifact Registry
         if: steps.parse.outputs.rollback_frontend == 'true'
         run: |
-          aws ecr describe-images \
-            --repository-name vidshieldai-frontend-prod \
-            --image-ids imageTag=${{ env.ROLLBACK_TAG }} \
-            --region ${{ env.AWS_REGION }} \
-            || (echo "ERROR: frontend image tag '${{ env.ROLLBACK_TAG }}' not found in ECR" && exit 1)
+          gcloud artifacts docker images describe \
+            "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-frontend:${{ env.ROLLBACK_TAG }}" \
+            --project ${{ env.GCP_PROJECT_ID }} \
+            || (echo "ERROR: frontend image tag '${{ env.ROLLBACK_TAG }}' not found in Artifact Registry" && exit 1)
 
-  # ── Snapshot current task definition ARNs (for audit trail) ────────────────────
+  # ── Snapshot current deployment revision (for audit trail) ─────────────────────
   snapshot:
-    name: Snapshot Current Task Defs
+    name: Snapshot Current Revisions
     runs-on: ubuntu-latest
     needs: validate
 
     outputs:
-      current_api_arn:      ${{ steps.snap.outputs.current_api_arn }}
-      current_worker_arn:   ${{ steps.snap.outputs.current_worker_arn }}
-      current_frontend_arn: ${{ steps.snap.outputs.current_frontend_arn }}
+      current_backend_image:  ${{ steps.snap.outputs.current_backend_image }}
+      current_worker_image:   ${{ steps.snap.outputs.current_worker_image }}
+      current_frontend_image: ${{ steps.snap.outputs.current_frontend_image }}
 
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      - name: Record current active task definition ARNs
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_LOCATION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Record current active images
         id: snap
         run: |
-          API_ARN=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_BACKEND_SERVICE }} \
-            --query 'services[0].taskDefinition' --output text)
+          BACKEND_IMG=$(kubectl get deployment vidshield-backend \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -o jsonpath='{.spec.template.spec.containers[?(@.name=="api")].image}' 2>/dev/null || echo "unknown")
+          WORKER_IMG=$(kubectl get deployment vidshield-worker \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -o jsonpath='{.spec.template.spec.containers[?(@.name=="worker")].image}' 2>/dev/null || echo "unknown")
+          FRONTEND_IMG=$(kubectl get deployment vidshield-frontend \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -o jsonpath='{.spec.template.spec.containers[?(@.name=="frontend")].image}' 2>/dev/null || echo "unknown")
 
-          WORKER_ARN=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_WORKER_SERVICE }} \
-            --query 'services[0].taskDefinition' --output text)
+          echo "current_backend_image=$BACKEND_IMG"  >> "$GITHUB_OUTPUT"
+          echo "current_worker_image=$WORKER_IMG"    >> "$GITHUB_OUTPUT"
+          echo "current_frontend_image=$FRONTEND_IMG" >> "$GITHUB_OUTPUT"
 
-          FRONTEND_ARN=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_FRONTEND_SERVICE }} \
-            --query 'services[0].taskDefinition' --output text)
+          echo "### Current Images (pre-rollback)"       >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service  | Image |"                    >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|"                    >> "$GITHUB_STEP_SUMMARY"
+          echo "| API      | \`$BACKEND_IMG\` |"         >> "$GITHUB_STEP_SUMMARY"
+          echo "| Worker   | \`$WORKER_IMG\` |"          >> "$GITHUB_STEP_SUMMARY"
+          echo "| Frontend | \`$FRONTEND_IMG\` |"        >> "$GITHUB_STEP_SUMMARY"
 
-          echo "current_api_arn=$API_ARN"           >> "$GITHUB_OUTPUT"
-          echo "current_worker_arn=$WORKER_ARN"     >> "$GITHUB_OUTPUT"
-          echo "current_frontend_arn=$FRONTEND_ARN" >> "$GITHUB_OUTPUT"
-
-          echo "### Current Task Definitions (pre-rollback)" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Service  | Active Task Definition ARN |"   >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------|----------------------------|"   >> "$GITHUB_STEP_SUMMARY"
-          echo "| API      | \`$API_ARN\` |"                >> "$GITHUB_STEP_SUMMARY"
-          echo "| Worker   | \`$WORKER_ARN\` |"             >> "$GITHUB_STEP_SUMMARY"
-          echo "| Frontend | \`$FRONTEND_ARN\` |"           >> "$GITHUB_STEP_SUMMARY"
-
-  # ── Roll back ECS services ──────────────────────────────────────────────────────
-  rollback-ecs:
-    name: Rollback ECS — Production
+  # ── Roll back GKE deployments ───────────────────────────────────────────────────
+  rollback-gke:
+    name: Rollback GKE — Production
     runs-on: ubuntu-latest
     needs: [validate, snapshot]
 
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      # ── Register rollback task definitions ──────────────────────────────────────
-      - name: Register rollback task def — Backend API
-        id: register-api
-        if: needs.validate.outputs.rollback_api == 'true'
-        run: |
-          CURRENT=$(aws ecs describe-task-definition \
-            --task-definition ${{ env.TASK_DEF_API }} \
-            --query 'taskDefinition' --output json)
-          NEW_TD=$(echo "$CURRENT" | python3 -c "
-          import json, sys
-          td = json.load(sys.stdin)
-          for c in td['containerDefinitions']:
-              if 'vidshieldai-backend-prod' in c['image']:
-                  c['image'] = c['image'].rsplit(':', 1)[0] + ':${{ env.ROLLBACK_TAG }}'
-          for key in ['taskDefinitionArn','revision','status','requiresAttributes',
-                      'compatibilities','registeredAt','registeredBy','deregisteredAt']:
-              td.pop(key, None)
-          print(json.dumps(td))
-          ")
-          NEW_ARN=$(aws ecs register-task-definition \
-            --cli-input-json "$NEW_TD" \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-          echo "arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_LOCATION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Register rollback task def — Worker
-        id: register-worker
-        if: needs.validate.outputs.rollback_worker == 'true'
-        run: |
-          CURRENT=$(aws ecs describe-task-definition \
-            --task-definition ${{ env.TASK_DEF_WORKER }} \
-            --query 'taskDefinition' --output json)
-          NEW_TD=$(echo "$CURRENT" | python3 -c "
-          import json, sys
-          td = json.load(sys.stdin)
-          for c in td['containerDefinitions']:
-              if 'vidshieldai-agent-prod' in c['image']:
-                  c['image'] = c['image'].rsplit(':', 1)[0] + ':${{ env.ROLLBACK_TAG }}'
-          for key in ['taskDefinitionArn','revision','status','requiresAttributes',
-                      'compatibilities','registeredAt','registeredBy','deregisteredAt']:
-              td.pop(key, None)
-          print(json.dumps(td))
-          ")
-          NEW_ARN=$(aws ecs register-task-definition \
-            --cli-input-json "$NEW_TD" \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-          echo "arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
-
-      - name: Register rollback task def — Frontend
-        id: register-frontend
-        if: needs.validate.outputs.rollback_frontend == 'true'
-        run: |
-          CURRENT=$(aws ecs describe-task-definition \
-            --task-definition ${{ env.TASK_DEF_FRONTEND }} \
-            --query 'taskDefinition' --output json)
-          NEW_TD=$(echo "$CURRENT" | python3 -c "
-          import json, sys
-          td = json.load(sys.stdin)
-          for c in td['containerDefinitions']:
-              if 'vidshieldai-frontend-prod' in c['image']:
-                  c['image'] = c['image'].rsplit(':', 1)[0] + ':${{ env.ROLLBACK_TAG }}'
-          for key in ['taskDefinitionArn','revision','status','requiresAttributes',
-                      'compatibilities','registeredAt','registeredBy','deregisteredAt']:
-              td.pop(key, None)
-          print(json.dumps(td))
-          ")
-          NEW_ARN=$(aws ecs register-task-definition \
-            --cli-input-json "$NEW_TD" \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-          echo "arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
-
-      # ── Update services ─────────────────────────────────────────────────────────
       - name: Rollback — Backend API
         if: needs.validate.outputs.rollback_api == 'true'
         run: |
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_BACKEND_SERVICE }} \
-            --task-definition ${{ steps.register-api.outputs.arn }} \
-            --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
+          kubectl set image deployment/vidshield-backend \
+            api=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-backend:${{ env.ROLLBACK_TAG }} \
+            -n ${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/vidshield-backend -n ${{ env.K8S_NAMESPACE }} --timeout=300s
 
       - name: Rollback — Worker
         if: needs.validate.outputs.rollback_worker == 'true'
         run: |
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_WORKER_SERVICE }} \
-            --task-definition ${{ steps.register-worker.outputs.arn }} \
-            --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
+          kubectl set image deployment/vidshield-worker \
+            worker=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-agent:${{ env.ROLLBACK_TAG }} \
+            -n ${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/vidshield-worker -n ${{ env.K8S_NAMESPACE }} --timeout=300s
 
       - name: Rollback — Frontend
         if: needs.validate.outputs.rollback_frontend == 'true'
         run: |
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_FRONTEND_SERVICE }} \
-            --task-definition ${{ steps.register-frontend.outputs.arn }} \
-            --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
+          kubectl set image deployment/vidshield-frontend \
+            frontend=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-frontend:${{ env.ROLLBACK_TAG }} \
+            -n ${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/vidshield-frontend -n ${{ env.K8S_NAMESPACE }} --timeout=300s
 
-      # ── Wait for stability ───────────────────────────────────────────────────────
-      - name: Wait for Backend API stability
-        if: needs.validate.outputs.rollback_api == 'true'
+      - name: Invalidate Cloud CDN cache (frontend rolled back)
+        if: needs.validate.outputs.rollback_frontend == 'true' && vars.CLOUD_CDN_URL_MAP != ''
         run: |
-          aws ecs wait services-stable \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_BACKEND_SERVICE }} \
-            --region ${{ env.AWS_REGION }}
-
-      - name: Wait for Frontend stability
-        if: needs.validate.outputs.rollback_frontend == 'true'
-        run: |
-          aws ecs wait services-stable \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_FRONTEND_SERVICE }} \
-            --region ${{ env.AWS_REGION }}
-
-      # ── Invalidate CloudFront (frontend rolled back) ─────────────────────────────
-      - name: Invalidate CloudFront cache
-        if: needs.validate.outputs.rollback_frontend == 'true' && vars.CLOUDFRONT_DISTRIBUTION_ID_PROD != ''
-        run: |
-          aws cloudfront create-invalidation \
-            --distribution-id ${{ vars.CLOUDFRONT_DISTRIBUTION_ID_PROD }} \
-            --paths "/*"
+          gcloud compute url-maps invalidate-cdn-cache ${{ vars.CLOUD_CDN_URL_MAP }} \
+            --path "/*" \
+            --project ${{ env.GCP_PROJECT_ID }} \
+            --async
 
   # ── Post-rollback summary ───────────────────────────────────────────────────────
   summary:
     name: Rollback Summary
     runs-on: ubuntu-latest
-    needs: [validate, snapshot, rollback-ecs]
+    needs: [validate, snapshot, rollback-gke]
     if: always()
 
     steps:
@@ -287,17 +192,17 @@ jobs:
         run: |
           echo "## Rollback Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Field    | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field        | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Rollback tag | \`${{ env.ROLLBACK_TAG }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Services     | \`${{ github.event.inputs.services }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Triggered by | \`${{ github.actor }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Reason       | ${{ github.event.inputs.reason }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Status       | ${{ needs.rollback-ecs.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Status       | ${{ needs.rollback-gke.result }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Pre-rollback Task Definitions" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Service  | ARN |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------|-----|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| API      | \`${{ needs.snapshot.outputs.current_api_arn }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Worker   | \`${{ needs.snapshot.outputs.current_worker_arn }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Frontend | \`${{ needs.snapshot.outputs.current_frontend_arn }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Pre-rollback Images" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service  | Image |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| API      | \`${{ needs.snapshot.outputs.current_backend_image }}\` |"  >> "$GITHUB_STEP_SUMMARY"
+          echo "| Worker   | \`${{ needs.snapshot.outputs.current_worker_image }}\` |"   >> "$GITHUB_STEP_SUMMARY"
+          echo "| Frontend | \`${{ needs.snapshot.outputs.current_frontend_image }}\` |" >> "$GITHUB_STEP_SUMMARY"
