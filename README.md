@@ -6,9 +6,9 @@
 [![Next.js 14](https://img.shields.io/badge/Next.js-14-black)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
 [![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-336791)](https://www.postgresql.org/)
-[![AWS](https://img.shields.io/badge/AWS-ECS%20%7C%20RDS%20%7C%20S3%20%7C%20CloudFront-FF9900)](https://aws.amazon.com/)
+[![GCP](https://img.shields.io/badge/GCP-GKE%20%7C%20Cloud%20SQL%20%7C%20GCS%20%7C%20Cloud%20CDN-4285F4)](https://cloud.google.com/)
 
-**VidShield AI** is an enterprise-oriented platform for **recorded video workflows**, **AI-assisted moderation**, **live stream monitoring**, **analytics**, **policies**, **webhooks**, **reports (PDF)**, **billing (Stripe)**, and **operator notifications**. The system is designed to run **on AWS** (ECS, RDS, ElastiCache, S3, CloudFront) while remaining fully developable **locally** via Docker Compose.
+**VidShield AI** is an enterprise-oriented platform for **recorded video workflows**, **AI-assisted moderation**, **live stream monitoring**, **analytics**, **policies**, **webhooks**, **reports (PDF)**, **billing (Stripe)**, and **operator notifications**. The system is designed to run **on GCP** (GKE, Cloud SQL, Memorystore, GCS, Cloud CDN) while remaining fully developable **locally** via Docker Compose.
 
 ---
 
@@ -17,7 +17,7 @@
 1. [Architecture overview](#architecture-overview)  
 2. [Tech stack](#tech-stack)  
 3. [Repository map](#repository-map)  
-4. [AWS cloud deployment](#aws-cloud-deployment)  
+4. [GCP cloud deployment](#gcp-cloud-deployment)  
 5. [Local development](#local-development)  
 6. [Makefile & tooling](#makefile--tooling)  
 7. [API & realtime](#api--realtime)  
@@ -28,7 +28,7 @@
 
 ## Architecture overview
 
-### System context (AWS and clients)
+### System context (GCP and clients)
 
 ```mermaid
 flowchart TB
@@ -36,19 +36,19 @@ flowchart TB
     U[Operators / Admins]
     P[Partner API consumers]
   end
-  subgraph aws_edge["AWS edge"]
-    CF[CloudFront]
-    ALB[Application Load Balancer]
+  subgraph gcp_edge["GCP edge"]
+    CDN[Cloud CDN]
+    LB[Cloud Load Balancer]
   end
-  subgraph aws_compute["AWS compute — ECS Fargate"]
+  subgraph gcp_compute["GCP compute — GKE"]
     FE[Next.js frontend service]
     API[FastAPI + Socket.IO service]
     WRK[Celery worker service]
   end
-  subgraph aws_data["AWS data plane"]
-    RDS[(RDS PostgreSQL 16)]
-    EC[(ElastiCache Redis)]
-    S3[(S3 — video / artifacts)]
+  subgraph gcp_data["GCP data plane"]
+    SQL[(Cloud SQL PostgreSQL 16)]
+    MEM[(Memorystore Redis)]
+    GCS[(GCS — video / artifacts)]
   end
   subgraph external["External APIs"]
     OAI[OpenAI]
@@ -57,18 +57,18 @@ flowchart TB
     TW[Twilio]
     ST[Stripe]
   end
-  U --> CF
-  P --> ALB
-  CF --> FE
-  CF --> ALB
-  ALB --> API
+  U --> CDN
+  P --> LB
+  CDN --> FE
+  CDN --> LB
+  LB --> API
   FE -->|same-origin /api/v1 rewrites| API
-  API --> RDS
-  API --> EC
-  API --> S3
-  WRK --> RDS
-  WRK --> EC
-  WRK --> S3
+  API --> SQL
+  API --> MEM
+  API --> GCS
+  WRK --> SQL
+  WRK --> MEM
+  WRK --> GCS
   WRK --> OAI
   WRK --> PC
   API --> SG
@@ -76,7 +76,7 @@ flowchart TB
   API --> ST
 ```
 
-Typical production pattern (as reflected in frontend config and `docs/DEPLOYMENT.md`): the **browser** calls **`https://<your-domain>/api/v1/...`** on the same origin; the **Next.js** task forwards those requests to the **internal API** URL (`API_UPSTREAM_URL` / upstream behind the ALB).
+Typical production pattern (as reflected in frontend config and `docs/DEPLOYMENT.md`): the **browser** calls **`https://<your-domain>/api/v1/...`** on the same origin; the **Next.js** service forwards those requests to the **internal API** URL (`API_UPSTREAM_URL` / upstream behind the Google Cloud Load Balancer).
 
 ### Application layers
 
@@ -104,7 +104,7 @@ flowchart LR
   subgraph persistence
     PG[(PostgreSQL)]
     RD[(Redis)]
-    S3B[(S3)]
+    S3B[(GCS)]
   end
   NEXT --> FAST
   RQ --> NEXT
@@ -127,11 +127,11 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant B as Browser
-  participant N as Next.js (ECS)
-  participant A as FastAPI (ECS)
+  participant N as Next.js (GKE)
+  participant A as FastAPI (GKE)
   participant R as Redis
   participant W as Celery worker
-  participant D as RDS PostgreSQL
+  participant D as Cloud SQL PostgreSQL
 
   B->>N: HTTPS page + /api/v1/...
   N->>A: Server-side rewrite to upstream
@@ -162,7 +162,7 @@ Values below are taken from **`backend/pyproject.toml`**, **`frontend/package.js
 | **AI / ML** | **OpenAI** SDK; **LangChain** 0.2.x; **LangGraph** 0.2.x; default models **gpt-4o** / **gpt-4o-mini** (configurable) |
 | **Vector DB** | **Pinecone** client (`PINECONE_API_KEY`, `PINECONE_INDEX`) |
 | **Video / media** | **FFmpeg**, **OpenCV** headless, **yt-dlp** |
-| **Object storage** | **AWS S3** via **boto3** |
+| **Object storage** | **Google Cloud Storage (GCS)** via **google-cloud-storage** |
 | **Realtime** | **python-socketio** (ASGI) + **FastAPI WebSocket** (live routes) |
 | **Email / SMS-style** | **SendGrid**; **Twilio** (WhatsApp) |
 | **Payments** | **Stripe** (checkout, portal, webhooks) |
@@ -176,9 +176,9 @@ Values below are taken from **`backend/pyproject.toml`**, **`frontend/package.js
 | **Testing** | **pytest** (backend), **Jest** + **Playwright** (frontend) |
 | **Lint / format** | **ruff** (backend), **ESLint** (frontend) |
 | **Containers** | **Docker** multi-stage builds; **Docker Compose** |
-| **IaC — AWS** | **Terraform** (~> AWS provider 5): VPC, **RDS**, **ElastiCache**, **ECS**, **S3**, **CloudFront**, **SQS**, **WAF**, monitoring |
+| **IaC — GCP** | **Terraform** (GCP provider): VPC, **Cloud SQL**, **Memorystore**, **GKE**, **GCS**, **Cloud CDN**, **Pub/Sub**, monitoring |
 | **Orchestration (optional)** | **Kubernetes** manifests under `k8s/` + `Makefile` targets |
-| **CI/CD** | **GitHub Actions** — `ci.yml` (lint/test), **`cd-prod.yml`** (ECR + ECS + optional CloudFront invalidation) |
+| **CI/CD** | **GitHub Actions** — `ci.yml` (lint/test), **`cd-prod.yml`** (Artifact Registry + GKE rollout + optional Cloud CDN invalidation) |
 
 ---
 
@@ -199,34 +199,28 @@ Values below are taken from **`backend/pyproject.toml`**, **`frontend/package.js
 ├── docker-compose.yml       # Local: postgres, redis, backend, worker, frontend
 ├── docker-compose.prod.yml  # Production-oriented overrides
 ├── Makefile                 # dev, test, lint, terraform, k8s helpers
-├── terraform/               # AWS modules + env tfvars
+├── terraform/               # GCP modules + env tfvars
 ├── k8s/                     # Optional Kubernetes deployment
 └── .github/workflows/       # CI + CD pipelines
 ```
 
 ---
 
-## AWS cloud deployment
+## GCP cloud deployment
 
-Infrastructure-as-code lives in **`terraform/`** (modules for VPC, RDS PostgreSQL, ElastiCache Redis, ECS, S3, CloudFront, SQS, WAF, monitoring). Environment inputs are under **`terraform/environments/`** (`dev`, `staging`, `prod` tfvars).
+Infrastructure-as-code lives in **`terraform/`** (modules for VPC, GKE, Cloud SQL PostgreSQL, Memorystore Redis, GCS, Cloud CDN, Pub/Sub, monitoring). Environment inputs are under **`terraform/environments/`** (`dev`, `staging`, `prod` tfvars).
 
 ### CI/CD pipeline (production)
 
 The workflow **`.github/workflows/cd-prod.yml`** (manual dispatch with image tag, or semver tag `v*.*.*`) does the following:
 
-1. **Build and push** container images to **Amazon ECR** (region **`us-east-1`** in the workflow file):
-   - `…/vidshieldai-backend-prod:<tag>`
-   - `…/vidshieldai-agent-prod:<tag>` (same `backend/` context — Celery worker image)
-   - `…/vidshieldai-frontend-prod:<tag>`
-2. **Register new ECS task definitions** for API, worker, and frontend services (image tag substitution).
-3. **`aws ecs update-service`** on cluster **`vidshieldai-cluster-prod`** for:
-   - **`vidshield-prod-api`**
-   - **`vidshield-prod-worker`**
-   - **`vidshield-prod-frontend`**
-4. **Wait** for backend service stability.
-5. **Invalidate CloudFront** when repository variable **`CLOUDFRONT_DISTRIBUTION_ID_PROD`** is set.
+1. **Build and push** container images to **Google Artifact Registry (GAR)**.
+2. **Authenticate to GCP** using Workload Identity Federation.
+3. **Roll out** backend, worker, and frontend images on **GKE** deployments.
+4. **Wait** for rollout stability on targeted GKE workloads.
+5. **Invalidate Cloud CDN** when the repository variable **`CLOUD_CDN_URL_MAP`** is configured.
 
-Required **GitHub secrets** (non-exhaustive; see workflow): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ECR_REGISTRY`, `NEXT_PUBLIC_API_URL`, `API_UPSTREAM_URL`, Stripe/build secrets as used in the workflow.
+Required **GitHub secrets** (non-exhaustive; see workflow): `GCP_PROJECT_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `GAR_LOCATION`, `GAR_REPOSITORY`, `GKE_CLUSTER_PROD`, `GKE_CLUSTER_LOCATION`, `NEXT_PUBLIC_API_URL`, `API_UPSTREAM_URL`, and Stripe/build secrets used in workflow.
 
 ### Terraform operations
 
@@ -235,12 +229,12 @@ make tf-plan ENV=dev
 make tf-apply ENV=dev
 ```
 
-Remote state for Terraform is configured in **`terraform/main.tf`** (S3 + DynamoDB lock); adjust bucket/table names for your AWS account before first apply.
+Remote state for Terraform is configured in **`terraform/main.tf`**; adjust backend settings for your GCP environment before first apply.
 
-### Runtime configuration on AWS
+### Runtime configuration on GCP
 
-- **Backend / worker:** inject `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `CORS_ORIGINS`, `AWS_*`, `S3_BUCKET_NAME`, `OPENAI_API_KEY`, optional `PINECONE_*`, `SENDGRID_*`, `TWILIO_*`, `STRIPE_*`, `FRONTEND_URL`, etc. (see **`backend/app/config.py`** and **`backend/.env.example`**).
-- **Frontend build:** for HTTPS sites, production builds use **same-origin** API paths (`NEXT_PUBLIC_APP_ENV=production` → empty public API base in `frontend/src/lib/constants.ts`) so the browser never mixes `http` API calls on an `https` page. **Next.js rewrites** (`frontend/next.config.js`) proxy `/api/v1/*` to **`API_UPSTREAM_URL`** (internal service URL, e.g. `http://backend:8000` inside ECS, or internal ALB DNS).
+- **Backend / worker:** inject `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `CORS_ORIGINS`, `GCP_PROJECT_ID`, `GCS_BUCKET_NAME`, `GCS_SERVICE_ACCOUNT_KEY_PATH` (local only), `OPENAI_API_KEY`, optional `PINECONE_*`, `SENDGRID_*`, `TWILIO_*`, `STRIPE_*`, `FRONTEND_URL`, etc. (see **`backend/app/config.py`** and **`backend/.env.example`**).
+- **Frontend build:** for HTTPS sites, production builds use **same-origin** API paths (`NEXT_PUBLIC_APP_ENV=production` → empty public API base in `frontend/src/lib/constants.ts`) so the browser never mixes `http` API calls on an `https` page. **Next.js rewrites** (`frontend/next.config.js`) proxy `/api/v1/*` to **`API_UPSTREAM_URL`** (internal service URL behind GKE service/load balancer routing).
 
 Full step-by-step reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
@@ -326,7 +320,7 @@ Successful JSON responses use the **`{ "data": ... }`** envelope (see `DataWrapp
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Deep dive: middleware, workers, security |
 | [docs/API_SPEC.md](docs/API_SPEC.md) | Endpoint catalog and error conventions |
 | [docs/DB_SCHEMA.md](docs/DB_SCHEMA.md) | Tables, columns, migrations |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Docker, ECS, Terraform, Kubernetes, secrets |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Docker, GKE, Terraform, Kubernetes, secrets |
 
 ---
 
