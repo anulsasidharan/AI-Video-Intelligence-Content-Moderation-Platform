@@ -5,10 +5,10 @@ Periodic housekeeping tasks that run on the `cleanup` queue.
 Designed to be scheduled via Celery Beat or triggered manually.
 
 Tasks:
-- cleanup_temp_frames_task     — deletes S3 temp/frame artifacts beyond TTL
-- purge_stale_jobs_task        — marks stuck PROCESSING videos as FAILED
-- prune_old_analytics_events_task — removes analytics events beyond retention window
-- cleanup_orphaned_s3_objects_task — removes S3 objects with no DB record
+- cleanup_temp_frames_task          — deletes GCS temp/frame artifacts beyond TTL
+- purge_stale_jobs_task             — marks stuck PROCESSING videos as FAILED
+- prune_old_analytics_events_task   — removes analytics events beyond retention window
+- cleanup_orphaned_gcs_objects_task — removes GCS objects with no DB record
 
 Schedule example (Celery Beat):
     CELERYBEAT_SCHEDULE = {
@@ -32,9 +32,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import boto3
 import structlog
 from celery import shared_task
+from google.cloud import storage as gcs_storage
+from google.cloud.exceptions import NotFound
 
 from app.config import settings
 from app.models.analytics import AnalyticsEvent
@@ -46,8 +47,20 @@ logger = structlog.get_logger(__name__)
 # How long (hours) a video may stay in PROCESSING before being marked stale
 _STALE_PROCESSING_HOURS = 2
 
-# S3 prefix where temporary frame artifacts are stored
+# GCS prefix where temporary frame artifacts are stored
 _TEMP_FRAMES_PREFIX = "temp/frames/"
+
+
+def _gcs_client() -> gcs_storage.Client:
+    """Return a GCS client using Application Default Credentials."""
+    kwargs: dict = {}
+    if settings.GCP_PROJECT_ID:
+        kwargs["project"] = settings.GCP_PROJECT_ID
+    if settings.GCS_SERVICE_ACCOUNT_KEY_PATH:
+        return gcs_storage.Client.from_service_account_json(
+            settings.GCS_SERVICE_ACCOUNT_KEY_PATH, **kwargs
+        )
+    return gcs_storage.Client(**kwargs)
 
 
 # ── W-05-A: Delete temp frame artifacts from S3 ───────────────────────────────
@@ -64,7 +77,7 @@ def cleanup_temp_frames_task(
     ttl_hours: int = 24,
 ) -> dict[str, Any]:
     """
-    Delete temporary frame artifacts from S3 that are older than `ttl_hours`.
+    Delete temporary frame artifacts from GCS that are older than `ttl_hours`.
 
     Frame artifacts are written under the `temp/frames/` prefix during video
     analysis and are no longer needed once the pipeline completes.
@@ -81,35 +94,24 @@ def cleanup_temp_frames_task(
     deleted = errors = 0
 
     try:
-        s3 = boto3.client(
-            "s3",
-            region_name=settings.AWS_REGION,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID or None,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY or None,
-        )
+        gcs = _gcs_client()
+        blobs = gcs.list_blobs(settings.GCS_BUCKET_NAME, prefix=_TEMP_FRAMES_PREFIX)
 
-        paginator = s3.get_paginator("list_objects_v2")
-        pages = paginator.paginate(
-            Bucket=settings.S3_BUCKET_NAME,
-            Prefix=_TEMP_FRAMES_PREFIX,
-        )
+        keys_to_delete: list[str] = []
+        for blob in blobs:
+            # time_created is timezone-aware UTC
+            if blob.time_created and blob.time_created < cutoff:
+                keys_to_delete.append(blob.name)
 
-        keys_to_delete: list[dict] = []
-        for page in pages:
-            for obj in page.get("Contents", []):
-                if obj["LastModified"] < cutoff:
-                    keys_to_delete.append({"Key": obj["Key"]})
-
-        # S3 batch delete — max 1 000 per request
-        batch_size = 1000
-        for i in range(0, len(keys_to_delete), batch_size):
-            batch = keys_to_delete[i : i + batch_size]
-            resp = s3.delete_objects(
-                Bucket=settings.S3_BUCKET_NAME,
-                Delete={"Objects": batch, "Quiet": True},
-            )
-            errors += len(resp.get("Errors", []))
-            deleted += len(batch) - len(resp.get("Errors", []))
+        for key in keys_to_delete:
+            try:
+                gcs.bucket(settings.GCS_BUCKET_NAME).blob(key).delete()
+                deleted += 1
+            except NotFound:
+                deleted += 1  # already gone
+            except Exception as exc:
+                logger.warning("cleanup_temp_frames_delete_error", key=key, error=str(exc))
+                errors += 1
 
     except Exception as exc:
         logger.error("cleanup_temp_frames_error", error=str(exc))
@@ -221,75 +223,66 @@ def prune_old_analytics_events_task(
 
 @shared_task(
     bind=True,
-    name="app.workers.cleanup_tasks.cleanup_orphaned_s3_objects_task",
+    name="app.workers.cleanup_tasks.cleanup_orphaned_gcs_objects_task",
     max_retries=2,
     default_retry_delay=120,
 )
-def cleanup_orphaned_s3_objects_task(
+def cleanup_orphaned_gcs_objects_task(
     self,
     prefix: str = "videos/",
     min_age_hours: int = 48,
 ) -> dict[str, Any]:
     """
-    Scan the S3 bucket under `prefix` and delete objects that have no
+    Scan the GCS bucket under `prefix` and delete objects that have no
     corresponding Video row in the database (i.e. orphaned uploads).
 
     Objects younger than `min_age_hours` are skipped to avoid deleting
     in-progress uploads that have not yet been registered.
 
     Args:
-        prefix:        S3 prefix to scan (default "videos/").
+        prefix:        GCS prefix to scan (default "videos/").
         min_age_hours: Minimum object age before orphan check (default 48 h).
 
     Returns:
         {"scanned": int, "deleted": int, "errors": int}
     """
-    logger.info("cleanup_orphaned_s3_start", prefix=prefix, min_age_hours=min_age_hours)
+    logger.info("cleanup_orphaned_gcs_start", prefix=prefix, min_age_hours=min_age_hours)
 
     cutoff = datetime.now(UTC) - timedelta(hours=min_age_hours)
     scanned = deleted = errors = 0
 
     try:
-        s3 = boto3.client(
-            "s3",
-            region_name=settings.AWS_REGION,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID or None,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY or None,
-        )
+        gcs = _gcs_client()
+        blobs = gcs.list_blobs(settings.GCS_BUCKET_NAME, prefix=prefix)
 
-        paginator = s3.get_paginator("list_objects_v2")
-        pages = paginator.paginate(Bucket=settings.S3_BUCKET_NAME, Prefix=prefix)
+        orphan_keys: list[str] = []
+        for blob in blobs:
+            scanned += 1
+            if blob.time_created and blob.time_created >= cutoff:
+                continue
 
-        orphan_keys: list[dict] = []
-        for page in pages:
-            for obj in page.get("Contents", []):
-                scanned += 1
-                if obj["LastModified"] >= cutoff:
-                    continue
+            object_key = blob.name
+            with sync_session() as db:
+                exists = db.query(Video).filter(Video.s3_key == object_key).first()
+            if not exists:
+                orphan_keys.append(object_key)
 
-                s3_key = obj["Key"]
-                with sync_session() as db:
-                    exists = db.query(Video).filter(Video.s3_key == s3_key).first()
-                if not exists:
-                    orphan_keys.append({"Key": s3_key})
-
-        batch_size = 1000
-        for i in range(0, len(orphan_keys), batch_size):
-            batch = orphan_keys[i : i + batch_size]
-            resp = s3.delete_objects(
-                Bucket=settings.S3_BUCKET_NAME,
-                Delete={"Objects": batch, "Quiet": True},
-            )
-            batch_errors = len(resp.get("Errors", []))
-            errors += batch_errors
-            deleted += len(batch) - batch_errors
+        for key in orphan_keys:
+            try:
+                gcs.bucket(settings.GCS_BUCKET_NAME).blob(key).delete()
+                deleted += 1
+            except NotFound:
+                deleted += 1  # already gone
+            except Exception as exc:
+                logger.warning("cleanup_orphaned_gcs_delete_error", key=key, error=str(exc))
+                errors += 1
 
     except Exception as exc:
-        logger.error("cleanup_orphaned_s3_error", error=str(exc))
+        logger.error("cleanup_orphaned_gcs_error", error=str(exc))
         raise self.retry(exc=exc) from exc
 
     logger.info(
-        "cleanup_orphaned_s3_done",
+        "cleanup_orphaned_gcs_done",
         scanned=scanned,
         deleted=deleted,
         errors=errors,

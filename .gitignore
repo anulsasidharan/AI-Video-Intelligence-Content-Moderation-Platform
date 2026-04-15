@@ -235,3 +235,5 @@ frontend/storybook-static/
 # Bundle analysis reports
 frontend/.next/analyze/
 frontend/bundle-analyzer-report.html
+git_doc.md
+prompts/

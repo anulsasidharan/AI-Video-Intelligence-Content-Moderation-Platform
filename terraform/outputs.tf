@@ -1,76 +1,127 @@
-output "vpc_id" {
-  description = "VPC ID."
-  value       = module.vpc.vpc_id
+# ── Network ────────────────────────────────────────────────────────────────────
+
+output "network_id" {
+  description = "ID of the VPC network."
+  value       = module.vpc.network_id
 }
 
-output "alb_dns_name" {
-  description = "Application Load Balancer DNS name — point your domain here."
-  value       = module.ecs.alb_dns_name
+output "subnetwork_id" {
+  description = "ID of the primary subnetwork."
+  value       = module.vpc.subnetwork_id
 }
 
-output "cloudfront_domain" {
-  description = "CloudFront distribution domain name."
-  value       = module.cloudfront.distribution_domain_name
+# ── GKE ────────────────────────────────────────────────────────────────────────
+
+output "gke_cluster_name" {
+  description = "GKE cluster name — pass to gcloud container clusters get-credentials."
+  value       = module.gke.cluster_name
 }
 
-output "ecs_cluster_name" {
-  description = "ECS cluster name."
-  value       = module.ecs.cluster_name
-}
-
-output "rds_endpoint" {
-  description = "RDS connection endpoint."
-  value       = module.rds.db_endpoint
+output "gke_cluster_endpoint" {
+  description = "GKE control plane endpoint."
+  value       = module.gke.cluster_endpoint
   sensitive   = true
 }
 
-output "redis_primary_endpoint" {
-  description = "ElastiCache Redis primary endpoint."
-  value       = module.elasticache.primary_endpoint
+# ── Cloud SQL ─────────────────────────────────────────────────────────────────
+
+output "cloud_sql_instance_name" {
+  description = "Cloud SQL instance name."
+  value       = module.cloud_sql.instance_name
+}
+
+output "cloud_sql_private_ip" {
+  description = "Private IP address of the Cloud SQL instance."
+  value       = module.cloud_sql.private_ip
   sensitive   = true
 }
 
-output "videos_bucket" {
-  description = "S3 bucket name for videos."
-  value       = module.s3.videos_bucket_id
+output "cloud_sql_connection_name" {
+  description = "Cloud SQL connection name (project:region:instance)."
+  value       = module.cloud_sql.connection_name
 }
 
-output "thumbnails_bucket" {
-  description = "S3 bucket name for thumbnails."
-  value       = module.s3.thumbnails_bucket_id
+# ── Memorystore ───────────────────────────────────────────────────────────────
+
+output "redis_host" {
+  description = "Memorystore Redis host IP."
+  value       = module.memorystore.host
+  sensitive   = true
 }
 
-output "artifacts_bucket" {
-  description = "S3 bucket name for AI artifacts."
-  value       = module.s3.artifacts_bucket_id
+output "redis_port" {
+  description = "Memorystore Redis port."
+  value       = module.memorystore.port
 }
 
-output "video_processing_queue_url" {
-  description = "SQS URL for the video processing queue."
-  value       = module.sqs.video_processing_queue_url
+# ── GCS Buckets ───────────────────────────────────────────────────────────────
+
+output "gcs_videos_bucket" {
+  description = "GCS bucket name for videos."
+  value       = module.gcs.videos_bucket_name
 }
 
-output "moderation_queue_url" {
-  description = "SQS URL for the moderation queue."
-  value       = module.sqs.moderation_queue_url
+output "gcs_thumbnails_bucket" {
+  description = "GCS bucket name for thumbnails."
+  value       = module.gcs.thumbnails_bucket_name
 }
 
-output "alerts_topic_arn" {
-  description = "SNS topic ARN for infrastructure alerts."
-  value       = module.monitoring.alerts_topic_arn
+output "gcs_artifacts_bucket" {
+  description = "GCS bucket name for AI artifacts."
+  value       = module.gcs.artifacts_bucket_name
 }
 
-output "cloudwatch_dashboard" {
-  description = "CloudWatch dashboard name."
-  value       = module.monitoring.dashboard_name
+# ── Artifact Registry ─────────────────────────────────────────────────────────
+
+output "gar_repository_url" {
+  description = "Artifact Registry repository URL for Docker images."
+  value       = module.artifact_registry.repository_url
 }
 
-output "waf_cloudfront_arn" {
-  description = "ARN of the WAF WebACL attached to CloudFront."
-  value       = module.waf_cloudfront.web_acl_arn
+# ── Pub/Sub ───────────────────────────────────────────────────────────────────
+
+output "pubsub_video_uploaded_topic" {
+  description = "Pub/Sub topic ID for video upload events."
+  value       = module.pubsub.video_uploaded_topic_id
 }
 
-output "waf_alb_arn" {
-  description = "ARN of the WAF WebACL attached to the ALB."
-  value       = module.waf_alb.web_acl_arn
+output "pubsub_moderation_alerts_topic" {
+  description = "Pub/Sub topic ID for moderation alert events."
+  value       = module.pubsub.moderation_alerts_topic_id
+}
+
+# ── Cloud Armor ───────────────────────────────────────────────────────────────
+
+output "cloud_armor_policy_name" {
+  description = "Cloud Armor security policy name — attach to backend services."
+  value       = module.cloud_armor.policy_name
+}
+
+output "cloud_armor_policy_self_link" {
+  description = "Cloud Armor security policy self-link."
+  value       = module.cloud_armor.policy_self_link
+}
+
+# ── IAM ───────────────────────────────────────────────────────────────────────
+
+output "app_sa_email" {
+  description = "Application service account email (used by GKE workloads via Workload Identity)."
+  value       = module.iam.app_sa_email
+}
+
+output "deployer_sa_email" {
+  description = "Deployer service account email (used by GitHub Actions)."
+  value       = module.iam.deployer_sa_email
+}
+
+output "wif_provider_name" {
+  description = "Workload Identity Federation provider resource name — set as GCP_WORKLOAD_IDENTITY_PROVIDER in GitHub Actions."
+  value       = module.iam.wif_provider_name
+}
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+
+output "notification_channel_id" {
+  description = "Cloud Monitoring notification channel ID."
+  value       = module.monitoring.notification_channel_id
 }

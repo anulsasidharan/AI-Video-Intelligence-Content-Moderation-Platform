@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     def _derive_urls(self) -> "Settings":
         """Derive Celery and sync DB URLs from injected base URLs.
 
-        Injecting only DATABASE_URL and REDIS_URL (e.g. from Secrets Manager)
+        Injecting only DATABASE_URL and REDIS_URL (e.g. from GCP Secret Manager)
         is sufficient — sync and Celery URLs are derived automatically.
         """
         # Derive DATABASE_URL_SYNC from DATABASE_URL when still at default
@@ -55,12 +55,16 @@ class Settings(BaseSettings):
     PASSWORD_RESET_RATE_LIMIT: int = 3  # max requests per 15-minute window
     FRONTEND_URL: str = "http://localhost:3000"
 
-    # ── AWS ──────────────────────────────────────────────────
-    AWS_REGION: str = "us-east-1"
-    AWS_ACCESS_KEY_ID: str = ""
-    AWS_SECRET_ACCESS_KEY: str = ""
-    S3_BUCKET_NAME: str = "vidshield-videos"
-    S3_PRESIGNED_URL_EXPIRE: int = 3600  # seconds
+    # ── GCP ──────────────────────────────────────────────────
+    GCP_PROJECT_ID: str = ""
+    GCS_BUCKET_NAME: str = "vidshield-videos"
+    GCS_PRESIGNED_URL_EXPIRE: int = 3600  # seconds
+    # Optional: path to a service-account JSON key for signed URL generation.
+    # Leave blank when running on GKE with Workload Identity (ADC is used instead).
+    GCS_SERVICE_ACCOUNT_KEY_PATH: str = ""
+
+    # ── RTMP ingest ───────────────────────────────────────────
+    RTMP_INGEST_HOST: str = "ingest.vidshield.ai"
 
     # ── OpenAI ───────────────────────────────────────────────
     OPENAI_API_KEY: str = ""

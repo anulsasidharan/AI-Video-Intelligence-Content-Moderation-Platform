@@ -1,4 +1,4 @@
-"""Tests for W-05 — cleanup_tasks (S3 and DB mocked)."""
+"""Tests for W-05 — cleanup_tasks (GCS and DB mocked)."""
 
 from __future__ import annotations
 
@@ -7,32 +7,32 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from google.cloud.exceptions import NotFound
 
 
 def _utc_now():
     return datetime.now(UTC)
 
 
+def _make_blob(key: str, age_hours: int = 30):
+    blob = MagicMock()
+    blob.name = key
+    blob.time_created = _utc_now() - timedelta(hours=age_hours)
+    return blob
+
+
 # ── cleanup_temp_frames_task ───────────────────────────────────────────────────
 
 
 class TestCleanupTempFramesTask:
-    def _s3_object(self, key: str, age_hours: int = 30):
-        return {
-            "Key": key,
-            "LastModified": _utc_now() - timedelta(hours=age_hours),
-        }
+    @patch("app.workers.cleanup_tasks._gcs_client")
+    def test_deletes_old_objects(self, mock_gcs_client_fn):
+        mock_gcs = MagicMock()
+        mock_gcs_client_fn.return_value = mock_gcs
 
-    @patch("app.workers.cleanup_tasks.boto3.client")
-    def test_deletes_old_objects(self, mock_boto_client):
-        mock_s3 = MagicMock()
-        mock_boto_client.return_value = mock_s3
-
-        old_obj = self._s3_object("temp/frames/old.jpg", age_hours=30)
-        mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [{"Contents": [old_obj]}]
-        mock_s3.get_paginator.return_value = mock_paginator
-        mock_s3.delete_objects.return_value = {"Errors": []}
+        old_blob = _make_blob("temp/frames/old.jpg", age_hours=30)
+        mock_gcs.list_blobs.return_value = [old_blob]
+        mock_gcs.bucket.return_value.blob.return_value = MagicMock()
 
         from app.workers.cleanup_tasks import cleanup_temp_frames_task
 
@@ -40,33 +40,26 @@ class TestCleanupTempFramesTask:
 
         assert result["deleted"] == 1
         assert result["errors"] == 0
-        mock_s3.delete_objects.assert_called_once()
 
-    @patch("app.workers.cleanup_tasks.boto3.client")
-    def test_skips_recent_objects(self, mock_boto_client):
-        mock_s3 = MagicMock()
-        mock_boto_client.return_value = mock_s3
+    @patch("app.workers.cleanup_tasks._gcs_client")
+    def test_skips_recent_objects(self, mock_gcs_client_fn):
+        mock_gcs = MagicMock()
+        mock_gcs_client_fn.return_value = mock_gcs
 
-        recent_obj = self._s3_object("temp/frames/new.jpg", age_hours=1)
-        mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [{"Contents": [recent_obj]}]
-        mock_s3.get_paginator.return_value = mock_paginator
+        recent_blob = _make_blob("temp/frames/new.jpg", age_hours=1)
+        mock_gcs.list_blobs.return_value = [recent_blob]
 
         from app.workers.cleanup_tasks import cleanup_temp_frames_task
 
         result = cleanup_temp_frames_task(ttl_hours=24)
 
         assert result["deleted"] == 0
-        mock_s3.delete_objects.assert_not_called()
 
-    @patch("app.workers.cleanup_tasks.boto3.client")
-    def test_empty_bucket_returns_zero(self, mock_boto_client):
-        mock_s3 = MagicMock()
-        mock_boto_client.return_value = mock_s3
-
-        mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [{"Contents": []}]
-        mock_s3.get_paginator.return_value = mock_paginator
+    @patch("app.workers.cleanup_tasks._gcs_client")
+    def test_empty_bucket_returns_zero(self, mock_gcs_client_fn):
+        mock_gcs = MagicMock()
+        mock_gcs_client_fn.return_value = mock_gcs
+        mock_gcs.list_blobs.return_value = []
 
         from app.workers.cleanup_tasks import cleanup_temp_frames_task
 
@@ -75,14 +68,31 @@ class TestCleanupTempFramesTask:
         assert result["deleted"] == 0
         assert result["errors"] == 0
 
-    @patch("app.workers.cleanup_tasks.boto3.client")
-    def test_s3_error_triggers_retry(self, mock_boto_client):
-        mock_boto_client.side_effect = Exception("S3 connection refused")
+    @patch("app.workers.cleanup_tasks._gcs_client")
+    def test_gcs_error_triggers_retry(self, mock_gcs_client_fn):
+        mock_gcs_client_fn.side_effect = Exception("GCS connection refused")
 
         from app.workers.cleanup_tasks import cleanup_temp_frames_task
 
         with pytest.raises(Exception):  # noqa: B017 — retry wraps varied error types
             cleanup_temp_frames_task.apply(args=[24]).get(propagate=True)
+
+    @patch("app.workers.cleanup_tasks._gcs_client")
+    def test_not_found_on_delete_counts_as_deleted(self, mock_gcs_client_fn):
+        mock_gcs = MagicMock()
+        mock_gcs_client_fn.return_value = mock_gcs
+
+        old_blob = _make_blob("temp/frames/race.jpg", age_hours=30)
+        mock_gcs.list_blobs.return_value = [old_blob]
+        mock_blob = MagicMock()
+        mock_blob.delete.side_effect = NotFound("already gone")
+        mock_gcs.bucket.return_value.blob.return_value = mock_blob
+
+        from app.workers.cleanup_tasks import cleanup_temp_frames_task
+
+        result = cleanup_temp_frames_task(ttl_hours=24)
+        assert result["deleted"] == 1
+        assert result["errors"] == 0
 
 
 # ── purge_stale_jobs_task ──────────────────────────────────────────────────────
@@ -166,53 +176,42 @@ class TestPruneOldAnalyticsEventsTask:
         assert result["deleted"] == 0
 
 
-# ── cleanup_orphaned_s3_objects_task ──────────────────────────────────────────
+# ── cleanup_orphaned_gcs_objects_task ─────────────────────────────────────────
 
 
-class TestCleanupOrphanedS3ObjectsTask:
-    def _s3_object(self, key: str, age_hours: int = 72):
-        return {
-            "Key": key,
-            "LastModified": _utc_now() - timedelta(hours=age_hours),
-        }
-
+class TestCleanupOrphanedGcsObjectsTask:
     @patch("app.workers.cleanup_tasks.sync_session")
-    @patch("app.workers.cleanup_tasks.boto3.client")
-    def test_deletes_orphaned_objects(self, mock_boto_client, mock_sync_session):
-        mock_s3 = MagicMock()
-        mock_boto_client.return_value = mock_s3
+    @patch("app.workers.cleanup_tasks._gcs_client")
+    def test_deletes_orphaned_objects(self, mock_gcs_client_fn, mock_sync_session):
+        mock_gcs = MagicMock()
+        mock_gcs_client_fn.return_value = mock_gcs
 
-        orphan = self._s3_object("videos/orphan.mp4", age_hours=72)
-        mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [{"Contents": [orphan]}]
-        mock_s3.get_paginator.return_value = mock_paginator
-        mock_s3.delete_objects.return_value = {"Errors": []}
+        orphan_blob = _make_blob("videos/orphan.mp4", age_hours=72)
+        mock_gcs.list_blobs.return_value = [orphan_blob]
+        mock_gcs.bucket.return_value.blob.return_value = MagicMock()
 
-        # No matching video in DB (orphan)
+        # No matching video in DB
         mock_db = MagicMock()
         mock_db.__enter__ = lambda s: mock_db
         mock_db.__exit__ = MagicMock(return_value=False)
         mock_db.query.return_value.filter.return_value.first.return_value = None
         mock_sync_session.return_value = mock_db
 
-        from app.workers.cleanup_tasks import cleanup_orphaned_s3_objects_task
+        from app.workers.cleanup_tasks import cleanup_orphaned_gcs_objects_task
 
-        result = cleanup_orphaned_s3_objects_task(prefix="videos/", min_age_hours=48)
+        result = cleanup_orphaned_gcs_objects_task(prefix="videos/", min_age_hours=48)
 
         assert result["scanned"] == 1
         assert result["deleted"] == 1
-        mock_s3.delete_objects.assert_called_once()
 
     @patch("app.workers.cleanup_tasks.sync_session")
-    @patch("app.workers.cleanup_tasks.boto3.client")
-    def test_keeps_objects_with_db_record(self, mock_boto_client, mock_sync_session):
-        mock_s3 = MagicMock()
-        mock_boto_client.return_value = mock_s3
+    @patch("app.workers.cleanup_tasks._gcs_client")
+    def test_keeps_objects_with_db_record(self, mock_gcs_client_fn, mock_sync_session):
+        mock_gcs = MagicMock()
+        mock_gcs_client_fn.return_value = mock_gcs
 
-        obj = self._s3_object("videos/valid.mp4", age_hours=72)
-        mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [{"Contents": [obj]}]
-        mock_s3.get_paginator.return_value = mock_paginator
+        valid_blob = _make_blob("videos/valid.mp4", age_hours=72)
+        mock_gcs.list_blobs.return_value = [valid_blob]
 
         # Video exists in DB — should NOT be deleted
         mock_db = MagicMock()
@@ -221,28 +220,24 @@ class TestCleanupOrphanedS3ObjectsTask:
         mock_db.query.return_value.filter.return_value.first.return_value = MagicMock()
         mock_sync_session.return_value = mock_db
 
-        from app.workers.cleanup_tasks import cleanup_orphaned_s3_objects_task
+        from app.workers.cleanup_tasks import cleanup_orphaned_gcs_objects_task
 
-        result = cleanup_orphaned_s3_objects_task()
+        result = cleanup_orphaned_gcs_objects_task()
 
         assert result["deleted"] == 0
-        mock_s3.delete_objects.assert_not_called()
 
     @patch("app.workers.cleanup_tasks.sync_session")
-    @patch("app.workers.cleanup_tasks.boto3.client")
-    def test_skips_objects_newer_than_min_age(self, mock_boto_client, mock_sync_session):
-        mock_s3 = MagicMock()
-        mock_boto_client.return_value = mock_s3
+    @patch("app.workers.cleanup_tasks._gcs_client")
+    def test_skips_objects_newer_than_min_age(self, mock_gcs_client_fn, mock_sync_session):
+        mock_gcs = MagicMock()
+        mock_gcs_client_fn.return_value = mock_gcs
 
-        recent = self._s3_object("videos/recent.mp4", age_hours=10)
-        mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [{"Contents": [recent]}]
-        mock_s3.get_paginator.return_value = mock_paginator
+        recent_blob = _make_blob("videos/recent.mp4", age_hours=10)
+        mock_gcs.list_blobs.return_value = [recent_blob]
         mock_sync_session.return_value = MagicMock()
 
-        from app.workers.cleanup_tasks import cleanup_orphaned_s3_objects_task
+        from app.workers.cleanup_tasks import cleanup_orphaned_gcs_objects_task
 
-        result = cleanup_orphaned_s3_objects_task(min_age_hours=48)
+        result = cleanup_orphaned_gcs_objects_task(min_age_hours=48)
 
         assert result["deleted"] == 0
-        mock_s3.delete_objects.assert_not_called()

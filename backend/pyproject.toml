@@ -42,8 +42,9 @@ dependencies = [
     # File / multipart
     "python-multipart==0.0.12",
 
-    # AWS
-    "boto3==1.35.28",
+    # GCP
+    "google-cloud-storage>=2.18.0",
+    "google-auth>=2.35.0",
 
     # AI / ML
     "openai==1.51.0",

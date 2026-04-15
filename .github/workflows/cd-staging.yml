@@ -15,19 +15,21 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GAR_LOCATION: ${{ secrets.GAR_LOCATION }}           # e.g. us-central1
+  GAR_REPOSITORY: ${{ secrets.GAR_REPOSITORY }}       # e.g. vidshield
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER_STAGING }}
+  GKE_LOCATION: ${{ secrets.GKE_CLUSTER_LOCATION }}   # region or zone
   IMAGE_TAG: ${{ github.event.inputs.image_tag || github.sha }}
-  ECS_CLUSTER: vidshieldai-cluster-staging
-  ECS_BACKEND_SERVICE: vidshield-staging-api
-  ECS_WORKER_SERVICE: vidshield-staging-worker
+  K8S_NAMESPACE: vidshield
 
 permissions:
   contents: read
+  id-token: write   # required for Workload Identity Federation
 
 jobs:
   build-push:
-    name: Build & Push to ECR
+    name: Build & Push to Artifact Registry
     runs-on: ubuntu-latest
 
     outputs:
@@ -36,18 +38,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
 
       - name: Build & push backend
         uses: docker/build-push-action@v5
@@ -57,8 +58,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ${{ env.ECR_REGISTRY }}/vidshieldai-backend-prod:${{ env.IMAGE_TAG }}
-            ${{ env.ECR_REGISTRY }}/vidshieldai-backend-prod:staging-latest
+            ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-backend:${{ env.IMAGE_TAG }}
+            ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-backend:staging-latest
 
       - name: Build & push worker
         uses: docker/build-push-action@v5
@@ -68,8 +69,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ${{ env.ECR_REGISTRY }}/vidshieldai-agent-prod:${{ env.IMAGE_TAG }}
-            ${{ env.ECR_REGISTRY }}/vidshieldai-agent-prod:staging-latest
+            ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-agent:${{ env.IMAGE_TAG }}
+            ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-agent:staging-latest
 
       - name: Build & push frontend
         uses: docker/build-push-action@v5
@@ -85,41 +86,40 @@ jobs:
             NEXT_PUBLIC_APP_ENV=staging
             NEXT_PUBLIC_MOCK_API=false
           tags: |
-            ${{ env.ECR_REGISTRY }}/vidshieldai-frontend-prod:${{ env.IMAGE_TAG }}
-            ${{ env.ECR_REGISTRY }}/vidshieldai-frontend-prod:staging-latest
+            ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-frontend:${{ env.IMAGE_TAG }}
+            ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-frontend:staging-latest
 
-  deploy-ecs:
-    name: Deploy ECS — Staging
+  deploy-gke:
+    name: Deploy GKE — Staging
     runs-on: ubuntu-latest
     needs: build-push
 
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      - name: Force new deployment — Backend API
-        run: |
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_BACKEND_SERVICE }} \
-            --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_LOCATION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Force new deployment — Worker
+      - name: Roll out backend
         run: |
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_WORKER_SERVICE }} \
-            --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
+          kubectl set image deployment/vidshield-backend \
+            api=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-backend:${{ env.IMAGE_TAG }} \
+            -n ${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/vidshield-backend -n ${{ env.K8S_NAMESPACE }} --timeout=300s
 
-      - name: Wait for Backend API stability
+      - name: Roll out worker
         run: |
-          aws ecs wait services-stable \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_BACKEND_SERVICE }} \
-            --region ${{ env.AWS_REGION }}
+          kubectl set image deployment/vidshield-worker \
+            worker=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/vidshieldai-agent:${{ env.IMAGE_TAG }} \
+            -n ${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/vidshield-worker -n ${{ env.K8S_NAMESPACE }} --timeout=300s

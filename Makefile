@@ -80,9 +80,9 @@ deploy:
 	docker compose -f docker-compose.yml -f docker-compose.prod.yml push
 
 # ── Kubernetes ────────────────────────────────────────────────────────────────
-# Usage: make k8s-apply TAG=v1.2.3 REGISTRY=123456789.dkr.ecr.us-east-1.amazonaws.com
-TAG    ?= latest
-REGISTRY ?= <ECR_REGISTRY>
+# Usage: make k8s-apply TAG=v1.2.3 REGISTRY=REGION-docker.pkg.dev/PROJECT/REPO
+TAG      ?= latest
+REGISTRY ?= <GAR_REGISTRY>
 
 k8s-apply:
 	kubectl apply -f k8s/00-namespace.yaml

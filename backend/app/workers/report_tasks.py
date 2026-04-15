@@ -30,7 +30,7 @@ from app.schemas.report import ReportFilters
 
 logger = structlog.get_logger(__name__)
 
-_S3_PREFIX = "reports/"
+_GCS_PREFIX = "reports/"
 
 
 @shared_task(
@@ -41,7 +41,7 @@ _S3_PREFIX = "reports/"
 )
 def generate_report_pdf_task(self, job_id: str) -> dict:
     """
-    Generate a PDF report for the given ReportJob id and upload it to S3.
+    Generate a PDF report for the given ReportJob id and upload it to GCS.
 
     Returns a dict with { job_id, status, s3_key } on success.
     """
@@ -144,22 +144,22 @@ def _run(job_id: str, log) -> dict:
 
     log.info("report_task_pdf_generated", size_bytes=len(pdf_bytes))
 
-    # ── 4. Upload to S3 ────────────────────────────────────────────────────────
+    # ── 4. Upload to GCS ───────────────────────────────────────────────────────
     from io import BytesIO
 
     from app.services.storage_service import get_storage_service
 
     storage = get_storage_service()
     safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in title)[:80]
-    s3_key = f"{_S3_PREFIX}{job_id}/{safe_title}.pdf"
+    gcs_key = f"{_GCS_PREFIX}{job_id}/{safe_title}.pdf"
 
     storage.upload_fileobj(
         fileobj=BytesIO(pdf_bytes),
-        s3_key=s3_key,
+        s3_key=gcs_key,  # parameter name kept for StorageService interface compatibility
         content_type="application/pdf",
     )
 
-    log.info("report_task_uploaded", s3_key=s3_key)
+    log.info("report_task_uploaded", gcs_key=gcs_key)
 
     # ── 5. Mark job ready ──────────────────────────────────────────────────────
     with sync_session() as db:
@@ -167,13 +167,13 @@ def _run(job_id: str, log) -> dict:
         job = result.scalar_one_or_none()
         if job:
             job.status = ReportStatus.READY
-            job.s3_key = s3_key
+            job.s3_key = gcs_key  # column name kept to avoid migration
             job.file_size_bytes = len(pdf_bytes)
             job.row_count = len(rows)
             db.commit()
 
-    log.info("report_task_done", job_id=job_id, s3_key=s3_key)
-    return {"job_id": job_id, "status": "ready", "s3_key": s3_key}
+    log.info("report_task_done", job_id=job_id, gcs_key=gcs_key)
+    return {"job_id": job_id, "status": "ready", "s3_key": gcs_key}
 
 
 def _fail_job(job_id: str, error: str) -> None:

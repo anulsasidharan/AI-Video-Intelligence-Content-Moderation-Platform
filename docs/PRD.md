@@ -28,7 +28,7 @@ Primary personas:
 | **Cache / broker** | Redis 7; Celery 5.4 with JSON serialization |
 | **AI** | OpenAI SDK, LangChain 0.2.x, LangGraph 0.2.x; configurable `OPENAI_MODEL` / `OPENAI_MINI_MODEL` (defaults `gpt-4o` / `gpt-4o-mini`) |
 | **Vector search** | Pinecone client (`PINECONE_API_KEY`, `PINECONE_INDEX`) |
-| **Storage** | AWS S3 via boto3 (`S3_BUCKET_NAME`, presigned URLs) |
+| **Storage** | Google Cloud Storage via `google-cloud-storage` (`GCS_BUCKET_NAME`, V4 signed URLs; internal references use `gs://`; DB column `s3_key` stores GCS object key for backwards compatibility) |
 | **Video / media** | FFmpeg (container), OpenCV headless, `yt-dlp` for URL-based ingestion |
 | **Realtime** | `python-socketio` ASGI wrapper around FastAPI (`app.main:asgi_app`); native FastAPI WebSocket on `/api/v1/live/ws/streams/{stream_id}` |
 | **Email / WhatsApp** | SendGrid (`sendgrid`), Twilio (`twilio`) |
@@ -60,7 +60,7 @@ Primary personas:
 - Paginated list with filters; create video records; get/update/delete single video.
 - **Presigned upload URL** generation; **URL analysis** (`/videos/analyze-url`); **duplicate check**; **bulk delete**.
 - Status polling endpoint `GET /videos/{id}/status`.
-- Storage integration for playback/thumbnail presigned URLs when S3 is configured.
+- Storage integration for playback/thumbnail signed URLs when GCS is configured.
 
 ### 3.4 Moderation
 
@@ -143,7 +143,7 @@ Primary personas:
 
 ## 5. User stories (implemented)
 
-1. **As an operator**, I can upload or register a video, track processing status, and open detail with presigned playback when S3 is available.
+1. **As an operator**, I can upload or register a video, track processing status, and open detail with signed playback URLs when GCS is available.
 2. **As an operator**, I can run moderation review workflows and apply overrides where permitted.
 3. **As an operator**, I can define policies and connect webhook endpoints for outbound events.
 4. **As an admin**, I can manage users, read access and moderation audits, inspect AI agent audit entries, and handle support tickets.
@@ -158,3 +158,5 @@ Primary personas:
 - `docs/API_SPEC.md` — HTTP surface  
 - `docs/DB_SCHEMA.md` — tables and relations  
 - `docs/DEPLOYMENT.md` — Docker, CI/CD, Terraform/Kubernetes references  
+- `docs/GCP-ARCHITECTURE-DESIGN.md` — GCP service inventory and diagrams  
+- `docs/GCP_DEPLOYMENT_RUNBOOK.md` — manual GCP deployment procedures  

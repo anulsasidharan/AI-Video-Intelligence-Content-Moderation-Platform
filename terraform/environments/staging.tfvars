@@ -1,56 +1,55 @@
 # ── staging.tfvars ─────────────────────────────────────────────────────────────
-# Near-production topology, smaller instance sizes.
+# Production-like staging environment with smaller instances.
 # terraform apply -var-file=environments/staging.tfvars
 
+project_id  = "vidshield-staging"
 project     = "vidshield"
+region      = "us-central1"
 environment = "staging"
-aws_region  = "us-east-1"
-# aws_account_id = "<your-account-id>"   # set via TF_VAR_aws_account_id env var
 
-availability_zones   = ["us-east-1a", "us-east-1b"]
-vpc_cidr             = "10.1.0.0/16"
-public_subnet_cidrs  = ["10.1.1.0/24", "10.1.2.0/24"]
-private_subnet_cidrs = ["10.1.11.0/24", "10.1.12.0/24"]
-single_nat_gateway   = true # still cost-optimised
+# GitHub — used to configure Workload Identity Federation
+github_org  = "your-github-org" # replace with your GitHub org/user
+github_repo = "vidshield-ai"
 
-# ECS sizing — staging scale
-api_cpu                = 512
-api_memory             = 1024
-api_desired_count      = 1
-worker_cpu             = 1024
-worker_memory          = 2048
-worker_desired_count   = 1
-frontend_cpu           = 256
-frontend_memory        = 512
-frontend_desired_count = 1
+# ── VPC ────────────────────────────────────────────────────────────────────────
+subnet_cidr           = "10.0.0.0/20"
+pods_cidr             = "10.48.0.0/14"
+services_cidr         = "10.52.0.0/20"
+master_ipv4_cidr      = "172.16.0.0/28"
+private_services_cidr = "10.64.0.0/16"
 
-# RDS — medium, single-AZ, 7-day backups
-rds_instance_class        = "db.t4g.medium"
-rds_allocated_storage     = 20
-rds_max_allocated_storage = 100
-rds_multi_az              = false
-rds_backup_retention_days = 7
-rds_deletion_protection   = false
-rds_skip_final_snapshot   = false
+# ── GKE ────────────────────────────────────────────────────────────────────────
+gke_cluster_name = "vidshield-gke-staging"
+gke_machine_type = "e2-standard-2"
+gke_min_nodes    = 1
+gke_max_nodes    = 5
+gke_disk_size_gb = 50
 
-# ElastiCache
-redis_node_type       = "cache.t4g.small"
-redis_num_cache_nodes = 1
+# ── Artifact Registry ─────────────────────────────────────────────────────────
+gar_repository = "vidshield"
 
-# S3
-s3_force_destroy = false
+# ── Cloud SQL ─────────────────────────────────────────────────────────────────
+db_tier         = "db-g1-small"
+db_disk_size_gb = 20
+db_name         = "vidshield"
+db_username     = "vidshield"
 
-# CloudFront
-cloudfront_price_class = "PriceClass_100"
-certificate_arn        = "" # set to staging ACM cert ARN if available
-domain_aliases         = []
-cors_origins           = "[\"https://staging.vidshield.ai\"]"
+# ── Memorystore Redis ─────────────────────────────────────────────────────────
+redis_tier           = "BASIC"
+redis_memory_size_gb = 2
 
-# Monitoring
-api_5xx_threshold = 20
-alarm_email       = "" # set to on-call email
+# ── GCS ────────────────────────────────────────────────────────────────────────
+cors_origins = [
+  "https://staging.vidshield.ai",
+  "https://app.staging.vidshield.ai",
+  "http://localhost:3000",
+]
 
-tags = {
-  CostCenter = "engineering"
-  Team       = "platform"
-}
+# ── Cloud Armor ───────────────────────────────────────────────────────────────
+armor_ip_rate_limit = 200
+armor_enable_owasp  = true
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+alert_email           = "platform-alerts@yourcompany.com" # replace with real email
+api_health_check_host = "api.staging.vidshield.ai"        # replace with real domain
+api_5xx_threshold     = 20

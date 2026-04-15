@@ -141,14 +141,14 @@ async def get_upload_url(
     upload_url = storage.presigned_put_url(
         s3_key=s3_key,
         content_type=body.content_type,
-        expires=settings.S3_PRESIGNED_URL_EXPIRE,
+        expires=settings.GCS_PRESIGNED_URL_EXPIRE,
     )
 
     logger.info("upload_url_generated", user_id=str(current_user.id), s3_key=s3_key)
     return UploadUrlResponse(
         upload_url=upload_url,
         s3_key=s3_key,
-        expires_in=settings.S3_PRESIGNED_URL_EXPIRE,
+        expires_in=settings.GCS_PRESIGNED_URL_EXPIRE,
     )
 
 

@@ -104,7 +104,7 @@ class StreamService:
             StreamResponse with the ingest URL and stream key.
         """
         stream_id = uuid.uuid4()
-        ingest_url = f"rtmp://{settings.AWS_REGION}.ingest.vidshield.ai/live/{stream_id}"
+        ingest_url = f"rtmp://{settings.RTMP_INGEST_HOST}/live/{stream_id}"
 
         stream = LiveStream(
             id=stream_id,
