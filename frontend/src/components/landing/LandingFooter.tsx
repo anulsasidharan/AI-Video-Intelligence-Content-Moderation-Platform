@@ -24,12 +24,6 @@ const footerLinks = {
 const teamMembers = [
   'Sudhanshu',
   'Anu L Sasidharan',
-  'Abhrajit Pal',
-  'Manish Mishra',
-  'Naveen Srikakolapu',
-  'Prodip Sarkar',
-  'Rajiv Ranjan',
-  'Ruthvik Kumar',
 ];
 
 export function LandingFooter() {

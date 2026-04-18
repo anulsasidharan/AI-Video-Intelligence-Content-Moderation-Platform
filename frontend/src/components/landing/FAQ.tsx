@@ -37,12 +37,12 @@ const faqs = [
   {
     question: 'Is VidShield AI GDPR compliant?',
     answer:
-      'The platform is designed GDPR-aware from the ground up — PII detection and masking in transcripts, data export, deletion requests, and configurable retention periods are all built in. Production deployments on AWS use encrypted storage, VPC isolation, and AWS Secrets Manager for credential management.',
+      'The platform is designed GDPR-aware from the ground up — PII detection and masking in transcripts, data export, deletion requests, and configurable retention periods are all built in. Production deployments on GCP use encrypted Cloud Storage, VPC isolation, and GCP Secret Manager for credential management.',
   },
   {
     question: 'What infrastructure does VidShield AI run on?',
     answer:
-      'VidShield AI is deployed on AWS ECS Fargate (stateless, auto-scaling containers), RDS PostgreSQL 16 (Multi-AZ in production), ElastiCache Redis 7 (cache + Celery broker), S3 (video + artifact storage), and CloudFront (CDN). Infrastructure is fully managed via Terraform with dev/staging/prod environment configs.',
+      'VidShield AI is deployed on GKE (auto-scaling Kubernetes containers), Cloud SQL PostgreSQL 16 (HA in production), Cloud Memorystore Redis 7 (cache + Celery broker), Google Cloud Storage (video + artifact storage), and Cloud CDN. Infrastructure is fully managed via Terraform with dev/staging/prod environment configs.',
   },
   {
     question: 'Can I integrate VidShield AI into my existing platform?',

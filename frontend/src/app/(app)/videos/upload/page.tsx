@@ -10,12 +10,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { UploadDropzone } from '@/components/video/UploadDropzone';
+import { ProcessingPipelineCard } from '@/components/video/ProcessingPipelineCard';
 import { useBulkUploadVideo, checkDuplicates, useAnalyzeUrl } from '@/hooks/useVideo';
 import { ROUTES } from '@/lib/constants';
 import type { UploadFile } from '@/types/video';
 
 export default function UploadPage() {
   const router = useRouter();
+  const [showPipeline, setShowPipeline] = useState(false);
+  const [pipelineDone, setPipelineDone] = useState(false);
 
   // ── File upload state ──────────────────────────────────────────────────────
   const [files, setFiles] = useState<UploadFile[]>([]);
@@ -70,6 +73,8 @@ export default function UploadPage() {
       setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
     };
     await uploadAll(files, onUpdate);
+    // Show the pipeline card after files are done uploading
+    setShowPipeline(true);
   };
 
   const fileButtonLabel = isUploading
@@ -138,7 +143,7 @@ export default function UploadPage() {
                 disabled={isUploading}
               />
 
-              {allDone && (
+              {allDone && !showPipeline && (
                 <div className="flex items-center gap-2 rounded-md bg-green-50 px-4 py-3 text-sm text-green-700 dark:bg-green-950/30 dark:text-green-400">
                   <CheckCircle2 className="h-4 w-4 shrink-0" />
                   <span>
@@ -155,21 +160,29 @@ export default function UploadPage() {
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => router.back()} disabled={isUploading}>
+                  <Button variant="outline" onClick={() => router.back()} disabled={isUploading || showPipeline}>
                     Cancel
                   </Button>
-                  {allDone ? (
-                    <Button onClick={() => router.push(ROUTES.videos)}>Go to Videos</Button>
+                  {allDone && pipelineDone ? (
+                    <Button onClick={() => router.push(ROUTES.videos)}>View Moderation Report</Button>
                   ) : (
                     <Button
                       onClick={handleUpload}
-                      disabled={uploadableCount === 0 || isUploading}
+                      disabled={uploadableCount === 0 || isUploading || showPipeline}
                     >
                       {fileButtonLabel}
                     </Button>
                   )}
                 </div>
               </div>
+
+              {showPipeline && (
+                <ProcessingPipelineCard
+                  autoStart
+                  onComplete={() => setPipelineDone(true)}
+                  className="mt-2"
+                />
+              )}
             </CardContent>
           </Card>
         </TabsContent>

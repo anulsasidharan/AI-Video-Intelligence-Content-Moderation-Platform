@@ -357,16 +357,10 @@ describe('LandingFooter', () => {
     expect(screen.getByText('All systems operational')).toBeInTheDocument();
   });
 
-  it('renders all 8 team member names', () => {
+  it('renders team member names', () => {
     render(<LandingFooter />);
     expect(screen.getByText('Sudhanshu')).toBeInTheDocument();
     expect(screen.getByText('Anu L Sasidharan')).toBeInTheDocument();
-    expect(screen.getByText('Abhrajit Pal')).toBeInTheDocument();
-    expect(screen.getByText('Manish Mishra')).toBeInTheDocument();
-    expect(screen.getByText('Naveen Srikakolapu')).toBeInTheDocument();
-    expect(screen.getByText('Prodip Sarkar')).toBeInTheDocument();
-    expect(screen.getByText('Rajiv Ranjan')).toBeInTheDocument();
-    expect(screen.getByText('Ruthvik Kumar')).toBeInTheDocument();
   });
 
   it('renders legal links', () => {

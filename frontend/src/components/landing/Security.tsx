@@ -25,13 +25,13 @@ const securityFeatures = [
     icon: Database,
     title: 'Encrypted Storage',
     description:
-      'All video artifacts stored on AWS S3 with server-side encryption. Presigned URLs for secure, time-limited access.',
+      'All video artifacts stored on Google Cloud Storage (GCS) with server-side encryption. Signed URLs for secure, time-limited access.',
   },
   {
     icon: Key,
     title: 'Secrets Management',
     description:
-      'Zero hardcoded credentials. All secrets via AWS Secrets Manager with automatic rotation.',
+      'Zero hardcoded credentials. All secrets via GCP Secret Manager with automatic rotation and Workload Identity Federation.',
   },
   {
     icon: FileText,
@@ -59,7 +59,7 @@ const compliance = [
   { label: 'SOC 2', status: 'In Progress' },
   { label: 'HTTPS/TLS', status: 'Enforced' },
   { label: 'HMAC Signatures', status: 'All Webhooks' },
-  { label: 'Multi-AZ', status: 'AWS RDS' },
+  { label: 'Multi-Region', status: 'Cloud SQL HA' },
 ];
 
 export function Security() {
