@@ -1,9 +1,13 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Play, Shield, Zap, Globe } from 'lucide-react';
+import { DemoVideoModal } from './DemoVideoModal';
 
 export function Hero() {
+  const [demoOpen, setDemoOpen] = useState(false);
+
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden bg-slate-950 pt-16">
       {/* Background gradient */}
@@ -58,13 +62,14 @@ export function Hero() {
             Start for Free
             <ArrowRight size={18} />
           </Link>
-          <a
-            href="#how-it-works"
+          <button
+            type="button"
+            onClick={() => setDemoOpen(true)}
             className="inline-flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-white font-semibold text-base px-8 py-3.5 rounded-xl transition-all duration-200"
           >
             <Play size={16} className="text-blue-400" />
             See How It Works
-          </a>
+          </button>
         </div>
 
         {/* Trust Indicators */}
@@ -72,7 +77,7 @@ export function Hero() {
           {[
             { icon: Shield, label: 'GDPR Compliant' },
             { icon: Zap, label: 'Sub-2s Latency' },
-            { icon: Globe, label: 'AWS Global Scale' },
+            { icon: Globe, label: 'GCP Global Scale' },
           ].map(({ icon: Icon, label }) => (
             <div key={label} className="flex items-center gap-2 text-slate-400">
               <Icon size={16} className="text-blue-400" />
@@ -147,6 +152,8 @@ export function Hero() {
           <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-3/4 h-20 bg-blue-600/20 blur-3xl rounded-full" />
         </div>
       </div>
+
+      <DemoVideoModal open={demoOpen} onClose={() => setDemoOpen(false)} />
     </section>
   );
 }

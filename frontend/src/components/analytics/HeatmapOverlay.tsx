@@ -62,7 +62,7 @@ export function HeatmapOverlay({ data, isLoading, className }: HeatmapOverlayPro
                     />
                   </div>
                   <div className="w-24 text-right text-xs text-muted-foreground tabular-nums">
-                    {item.count} ({item.percentage.toFixed(1)}%)
+                    {item.count} ({(item.percentage ?? 0).toFixed(1)}%)
                   </div>
                 </div>
               );

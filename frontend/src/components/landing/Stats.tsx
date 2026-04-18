@@ -4,7 +4,7 @@ const stats = [
   { value: '99.4%', label: 'Moderation Accuracy', description: 'Validated on benchmark datasets' },
   { value: '6', label: 'Specialized AI Agents', description: 'LangGraph-orchestrated pipeline' },
   { value: '3', label: 'Ingestion Channels', description: 'Upload, Live, API submission' },
-  { value: '∞', label: 'Horizontal Scale', description: 'ECS Fargate auto-scaling' },
+  { value: '∞', label: 'Horizontal Scale', description: 'GKE auto-scaling' },
 ];
 
 export function Stats() {
