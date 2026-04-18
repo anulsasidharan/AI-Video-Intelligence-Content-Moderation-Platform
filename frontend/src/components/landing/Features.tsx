@@ -1,5 +1,9 @@
+'use client';
+
+import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Play } from 'lucide-react';
+import { DemoVideoModal } from './DemoVideoModal';
 import {
   Brain,
   Video,
@@ -116,6 +120,8 @@ const accentMap: Record<string, string> = {
 };
 
 export function Features() {
+  const [demoOpen, setDemoOpen] = useState(false);
+
   return (
     <section id="features" className="bg-slate-950 py-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -163,14 +169,17 @@ export function Features() {
             Start Free Trial
             <ArrowRight size={16} />
           </Link>
-          <a
-            href="#how-it-works"
+          <button
+            onClick={() => setDemoOpen(true)}
             className="inline-flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-white font-semibold text-sm px-6 py-3 rounded-xl transition-colors"
           >
+            <Play size={14} className="text-blue-400" />
             See How It Works
-          </a>
+          </button>
         </div>
       </div>
+
+      <DemoVideoModal open={demoOpen} onClose={() => setDemoOpen(false)} />
     </section>
   );
 }
